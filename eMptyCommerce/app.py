@@ -9,7 +9,7 @@ import numpy as np
 import os
 import plotly.graph_objects as go
 from recommender import HybridRecommender
-from styles import apply_header_styles, render_header, render_category_bar, render_footer
+from styles import apply_header_styles, render_header, render_footer
 from ui_components import (
     render_search_bar, render_category_books_grid, render_hybrid_recommendations_grid,
     render_cosine_search_results_grid, render_customer_info_metrics, 
@@ -41,7 +41,6 @@ apply_header_styles()
 
 # Render các component header
 render_header()
-render_category_bar()
 
 # Render search bar
 render_search_bar(st.session_state)
@@ -801,9 +800,11 @@ else:
         
         try:
             book_df_full = pd.read_csv(os.path.join(DATA_DIR, 'book_data.csv'))
-            all_categories = ['Tất cả'] + sorted(
-                book_df_full['category'].dropna().unique().tolist()
-            )
+            
+            # Chỉ giữ category xuất hiện >= 5 lần (loại bỏ tên sách bị nhầm thành category)
+            cat_counts = book_df_full['category'].value_counts()
+            valid_categories = cat_counts[cat_counts >= 5].index.tolist()
+            all_categories = ['Tất cả'] + sorted(valid_categories)
         except:
             all_categories = ['Tất cả']
         
@@ -818,7 +819,7 @@ else:
             try:
                 filtered_books = book_df_full[
                     book_df_full['category'] == selected_cat
-                ].drop_duplicates('product_id').head(10)
+                ].drop_duplicates(subset='product_id', keep='first').head(10)
                 
                 if not filtered_books.empty:
                     render_category_books_grid(filtered_books, DATA_DIR, cols_per_row=5)

@@ -12,10 +12,9 @@ def apply_header_styles():
 <style>
 [data-testid="stHeader"] { display:none !important; }
 [data-testid="stToolbar"] { display:none !important; }
-.block-container { padding-top: 120px !important; }
+.block-container { padding-top: 80px !important; }
 
 /* Header bar */
-section[data-testid="stSidebar"] { margin-top: 70px; }
 div[data-testid="stAppViewContainer"] > div:first-child { margin-top: 0; }
 </style>
 """, unsafe_allow_html=True)
@@ -65,62 +64,6 @@ def render_header():
             <div style="color:white;font-size:14px;font-weight:700;">77.660</div>
             <div style="color:rgba(255,255,255,0.5);font-size:10px;">Khách hàng</div>
         </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-
-def render_category_bar():
-    """Render category bar cuộn ngang"""
-    st.markdown("""
-<div style="
-    position:fixed; top:64px; left:0; right:0; z-index:9998;
-    background:#1a1a2e;
-    border-bottom:1px solid rgba(255,255,255,0.08);
-    padding:0 24px;
-    overflow-x:auto;
-    white-space:nowrap;
-    scrollbar-width:none;
-">
-    <style>
-    .cat-bar::-webkit-scrollbar { display:none; }
-    .cat-item {
-        display:inline-block;
-        color:rgba(255,255,255,0.65);
-        font-size:12px;
-        padding:10px 16px;
-        cursor:pointer;
-        border-bottom:2px solid transparent;
-        transition:all 0.2s;
-        text-decoration:none;
-        white-space:nowrap;
-    }
-    .cat-item:hover {
-        color:white;
-        border-bottom:2px solid #6C63FF;
-    }
-    .cat-item.active {
-        color:#a78bfa;
-        border-bottom:2px solid #6C63FF;
-        font-weight:600;
-    }
-    </style>
-    <div class="cat-bar" style="display:flex;align-items:center;gap:4px;">
-        <span class="cat-item active">🏠 Tất cả</span>
-        <span class="cat-item">📖 Sách tư duy - Kỹ năng sống</span>
-        <span class="cat-item">📚 Tiểu Thuyết</span>
-        <span class="cat-item">✍️ Truyện ngắn - Tản văn</span>
-        <span class="cat-item">💼 Bài học kinh doanh</span>
-        <span class="cat-item">🔍 Truyện trinh thám</span>
-        <span class="cat-item">🌟 Tác phẩm kinh điển</span>
-        <span class="cat-item">💰 Sách tài chính - Tiền tệ</span>
-        <span class="cat-item">📢 Sách Marketing - Bán hàng</span>
-        <span class="cat-item">🎭 Sách nghệ thuật sống đẹp</span>
-        <span class="cat-item">🌏 Kiến thức - Bách khoa</span>
-        <span class="cat-item">👨‍💼 Sách kỹ năng làm việc</span>
-        <span class="cat-item">🧒 Văn học thiếu nhi</span>
-        <span class="cat-item">🗣️ Sách Học Tiếng Anh</span>
-        <span class="cat-item">🏠 Sách Làm Cha Mẹ</span>
     </div>
 </div>
 """, unsafe_allow_html=True)

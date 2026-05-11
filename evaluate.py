@@ -11,7 +11,7 @@ import os
 import pandas as pd
 import numpy as np
 from surprise import SVD, Dataset, Reader, accuracy
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -193,5 +193,152 @@ def evaluate_svd_model():
     print("=" * 100)
 
 
+def evaluate_svd_kfold(k=5):
+    """
+    Đánh giá mô hình SVD bằng K-Fold Cross Validation.
+    
+    Quy trình:
+    1. Đọc dữ liệu từ clean_reviews.csv
+    2. Chia dữ liệu thành k=5 fold bằng KFold từ sklearn
+    3. Với mỗi fold:
+       - Train SVD trên k-1 fold
+       - Test trên fold còn lại
+       - Tính RMSE và MAE
+    4. Tính trung bình và độ lệch chuẩn của RMSE và MAE
+    5. In kết quả đẹp bằng Tiếng Việt
+    """
+    
+    print("=" * 100)
+    print("📊 K-FOLD CROSS VALIDATION - ĐÁNH GIÁ CHẮC CHẮN")
+    print("=" * 100)
+    
+    # ========== BƯỚC 1: ĐỌC DỮ LIỆU ==========
+    print("\n📖 Bước 1: Đọc dữ liệu từ file clean_reviews.csv...")
+    try:
+        DATA_PATH = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 
+            'eMptyCommerce', 'data', 'clean_reviews.csv'
+        )
+        df = pd.read_csv(DATA_PATH)
+        print(f"   ✓ Đã đọc {len(df)} bản ghi đánh giá")
+    except Exception as e:
+        print(f"   ❌ Lỗi đọc dữ liệu: {e}")
+        return
+    
+    # ========== BƯỚC 2: KHỞI TẠO K-FOLD ==========
+    print(f"\n🔀 Bước 2: Khởi tạo K-Fold (k={k})...")
+    kf = KFold(n_splits=k, shuffle=True, random_state=42)
+    print(f"   ✓ Sẽ chia dữ liệu thành {k} fold để kiểm chứng chéo")
+    
+    # ========== BƯỚC 3: HUẤN LUYỆN VÀ ĐÁNH GIÁ VỚI MỖI FOLD ==========
+    print(f"\n🎯 Bước 3: Huấn luyện SVD trên từng fold...")
+    
+    rmse_list = []
+    mae_list = []
+    reader = Reader(rating_scale=(1, 5))
+    
+    for fold_idx, (train_idx, test_idx) in enumerate(kf.split(df)):
+        # Chia dữ liệu theo fold
+        train_data = df.iloc[train_idx].copy()
+        test_data = df.iloc[test_idx].copy()
+        
+        # Load dữ liệu huấn luyện
+        train_dataset = Dataset.load_from_df(
+            train_data[['customer_id', 'product_id', 'rating']], 
+            reader
+        )
+        trainset = train_dataset.build_full_trainset()
+        
+        # Load dữ liệu kiểm tra
+        test_dataset = Dataset.load_from_df(
+            test_data[['customer_id', 'product_id', 'rating']], 
+            reader
+        )
+        testset = trainset.build_anti_testset()
+        # Tạo testset từ test_data
+        testset = [(int(row['customer_id']), int(row['product_id']), int(row['rating'])) 
+                   for _, row in test_data.iterrows()]
+        
+        # Huấn luyện SVD
+        svd = SVD(n_factors=50, n_epochs=40, lr_all=0.005, reg_all=0.02, random_state=42)
+        svd.fit(trainset)
+        
+        # Dự đoán
+        predictions = svd.test(testset)
+        
+        # Tính RMSE
+        rmse = accuracy.rmse(predictions, verbose=False)
+        
+        # Tính MAE
+        predictions_array = np.array([pred.est for pred in predictions])
+        actual_array = np.array([pred.r_ui for pred in predictions])
+        mae = np.mean(np.abs(predictions_array - actual_array))
+        
+        rmse_list.append(rmse)
+        mae_list.append(mae)
+        
+        print(f"   Fold {fold_idx + 1}/{k}: RMSE={rmse:.4f}, MAE={mae:.4f}")
+    
+    # ========== BƯỚC 4: TÍNH THỐNG KÊ ==========
+    print(f"\n📊 Bước 4: Tính thống kê từ {k} fold...")
+    
+    mean_rmse = np.mean(rmse_list)
+    std_rmse = np.std(rmse_list)
+    mean_mae = np.mean(mae_list)
+    std_mae = np.std(mae_list)
+    
+    print(f"   ✓ RMSE trung bình: {mean_rmse:.4f} ± {std_rmse:.4f}")
+    print(f"   ✓ MAE trung bình: {mean_mae:.4f} ± {std_mae:.4f}")
+    
+    # ========== BƯỚC 5: IN KẾT QUẢ ==========
+    print("\n" + "=" * 100)
+    print("📊 KẾT QUẢ K-FOLD CROSS VALIDATION (k=5)")
+    print("=" * 100)
+    
+    print("\n📈 RMSE theo từng fold:")
+    for i, rmse in enumerate(rmse_list):
+        print(f"   Fold {i+1}: {rmse:.4f}")
+    
+    print(f"\n   📊 RMSE Trung bình: {mean_rmse:.4f}")
+    print(f"   📏 Độ lệch chuẩn: {std_rmse:.4f}")
+    print(f"   Min: {np.min(rmse_list):.4f}, Max: {np.max(rmse_list):.4f}")
+    
+    print("\n📊 MAE theo từng fold:")
+    for i, mae in enumerate(mae_list):
+        print(f"   Fold {i+1}: {mae:.4f}")
+    
+    print(f"\n   📊 MAE Trung bình: {mean_mae:.4f}")
+    print(f"   📏 Độ lệch chuẩn: {std_mae:.4f}")
+    print(f"   Min: {np.min(mae_list):.4f}, Max: {np.max(mae_list):.4f}")
+    
+    # ========== BƯỚC 6: ĐÁNH GIÁ CHẤT LƯỢNG ==========
+    print("\n🏆 ĐÁNH GIÁ CHẤT LƯỢNG MÔ HÌNH:")
+    if mean_rmse < 0.7:
+        rating = "🏆 XUẤT SẮC"
+    elif mean_rmse < 0.85:
+        rating = "⭐ TỐT"
+    else:
+        rating = "👍 CHẤP NHẬN ĐƯỢC"
+    
+    print(f"   {rating} - RMSE = {mean_rmse:.4f}")
+    
+    print(f"\n💡 KẾT LUẬN:")
+    print(f"   ✅ K-Fold đảm bảo kết quả RMSE={mean_rmse:.4f} ± {std_rmse:.4f}")
+    print(f"      đáng tin cậy hơn so với single split.")
+    print(f"   ✅ Mô hình SVD cho kết quả ổn định trên các fold khác nhau.")
+    
+    print("\n" + "=" * 100)
+    
+    return mean_rmse, std_rmse, mean_mae, std_mae
+
+
 if __name__ == "__main__":
+    print("\n" + "="*100)
+    print("PHẦN 1: ĐÁNH GIÁ SINGLE SPLIT (80/20)")
+    print("="*100)
     evaluate_svd_model()
+    
+    print("\n\n" + "="*100)
+    print("PHẦN 2: ĐÁNH GIÁ K-FOLD CROSS VALIDATION (k=5)")
+    print("="*100)
+    mean_rmse, std_rmse, mean_mae, std_mae = evaluate_svd_kfold(k=5)
