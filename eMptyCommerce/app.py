@@ -7,7 +7,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
+import plotly.graph_objects as go
 from recommender import HybridRecommender
+from styles import apply_header_styles, render_header, render_category_bar, render_footer
+from ui_components import (
+    render_search_bar, render_category_books_grid, render_hybrid_recommendations_grid,
+    render_cosine_search_results_grid, render_customer_info_metrics, 
+    render_search_result_container
+)
 
 
 # ==================== CẤU HÌNH TRANG ====================
@@ -22,89 +29,22 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(APP_DIR, 'data')
 
 
-# ==================== CSS FIXED HEADER ==================
-st.markdown("""
-<style>
-/* Ẩn header mặc định Streamlit */
-[data-testid="stHeader"] { display: none !important; }
-[data-testid="stToolbar"] { display: none !important; }
+# ==================== CẤU HÌNH HEADER & STYLES ====================
+# Khởi tạo session_state cho tìm kiếm
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ''
+if 'do_search' not in st.session_state:
+    st.session_state.do_search = False
 
-/* Tạo khoảng trống cho header giả */
-.block-container { padding-top: 80px !important; }
+# Áp dụng CSS styles
+apply_header_styles()
 
-/* Style cho search container giả header */
-.fake-header {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    z-index: 999;
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    padding: 10px 20px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
-}
-/* Ẩn label của st.text_input trong header */
-div[data-testid="stTextInput"] > label { display: none !important; }
-/* Style input trong header */
-div[data-testid="stTextInput"] > div > div > input {
-    border-radius: 8px 0 0 8px !important;
-    border: none !important;
-    padding: 10px 16px !important;
-    font-size: 14px !important;
-    height: 42px !important;
-}
-/* Style button tìm kiếm */
-div[data-testid="stButton"] > button {
-    border-radius: 0 8px 8px 0 !important;
-    background: #FF6B35 !important;
-    color: white !important;
-    border: none !important;
-    height: 42px !important;
-    font-weight: 600 !important;
-    padding: 0 20px !important;
-}
-</style>
-""", unsafe_allow_html=True)
+# Render các component header
+render_header()
+render_category_bar()
 
-# ── HEADER BAR ──
-st.markdown('<div class="fake-header">', unsafe_allow_html=True)
-
-header_col1, header_col2, header_col3 = st.columns([1, 5, 1])
-
-with header_col1:
-    st.markdown(
-        '<p style="color:white;font-size:18px;font-weight:700;margin:0;">🎯 eMpTyCommerce</p>',
-        unsafe_allow_html=True
-    )
-
-with header_col2:
-    # Khởi tạo session_state
-    if 'search_query' not in st.session_state:
-        st.session_state.search_query = ''
-    if 'do_search' not in st.session_state:
-        st.session_state.do_search = False
-
-    header_input = st.text_input(
-        "header_search",
-        value=st.session_state.search_query,
-        placeholder="🔍 Tìm kiếm sách theo tên, tác giả...",
-        key="header_input_box",
-        label_visibility="collapsed"
-    )
-
-with header_col3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    header_btn = st.button("🔍 Tìm kiếm", key="header_search_btn",
-                           use_container_width=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# Xử lý khi nhấn nút hoặc nhấn Enter
-if header_btn and header_input:
-    st.session_state.search_query = header_input
-    st.session_state.do_search = True
-    st.rerun()
+# Render search bar
+render_search_bar(st.session_state)
 
 
 # ==================== CACHE RESOURCE ====================
@@ -222,31 +162,32 @@ book_dict = {row['product_id']: row['title'] for _, row in book_data.iterrows()}
 
 # ==================== SIDEBAR - THANH ĐIỀU HƯỚNG ====================
 with st.sidebar:
-    st.title("📚 eMpTyCommerce")
+    # Compact HTML banner instead of st.title
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); 
+                padding: 12px 16px; border-radius: 8px; text-align: center; margin-bottom: 16px;">
+        <h3 style="margin: 0; color: white; font-size: 18px;">🎯 eMpTyCommerce</h3>
+        <p style="margin: 4px 0 0 0; color: #b0b0b0; font-size: 12px;">Hệ thống gợi ý thông minh</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Collapsed project info (Thesis + Student info)
+    with st.expander("ℹ️ Thông tin dự án", expanded=False):
+        st.caption("**Đề tài:** Hệ thống gợi ý sản phẩm thương mại điện tử bằng Tiếng Việt")
+        st.caption("**Phương pháp:** Hybrid Model (Content-Based + Collaborative Filtering)")
+        st.caption("**Mô hình:** TF-IDF + SVD")
+        st.divider()
+        st.caption("**Sinh viên:** Đào Minh Tới")
+        st.caption("**Giáo viên hướng dẫn:** ThS. Bùi Thị Diễm Trinh")
+    
     st.markdown("---")
     
-    # Thông tin luận văn
-    st.subheader("📋 Thông tin Luận Văn")
-    st.info("""
-    **Đề tài:** Hệ thống gợi ý sản phẩm thương mại điện tử bằng Tiếng Việt
-    
-    **Phương pháp:** Hybrid Model (Content-Based + Collaborative Filtering)
-    
-    **Mô hình:** TF-IDF + SVD
-    """)
-    
-    st.markdown("---")
-    st.subheader("👤 Thông tin Sinh viên")
-    st.write("**Tên sinh viên:** [Đào Minh Tới]")
-    st.write("**Giáo viên hướng dẫn:** [ThS. BÙI THỊ DIỄM TRINH]")
-    
-    st.markdown("---")
-    
-    # Chọn loại khách hàng
-    st.subheader("🎯 Chọn Kịch Bản")
+    # Scenario selection - cleaner label
+    st.markdown("**🎯 Chọn kịch bản**")
     customer_type = st.radio(
         "Loại khách hàng:",
-        ["👥 Khách hàng cũ", "🆕 Khách hàng mới (Cold-Start)"]
+        ["👥 Khách hàng cũ", "🆕 Khách hàng mới (Cold-Start)"],
+        label_visibility="collapsed"
     )
     
     if customer_type == "👥 Khách hàng cũ":
@@ -260,21 +201,21 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Thống kê dữ liệu
-    st.subheader("📊 Thống kê dữ liệu")
+    # Data statistics with cleaner layout
+    st.caption("📊 Thống kê dữ liệu")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("💼 Sách", len(book_data))
-        st.metric("⭐ Đánh giá", len(reviews_data))
+        st.metric("Sách", len(book_data))
+        st.metric("Đánh giá", len(reviews_data))
     with col2:
-        st.metric("👥 Khách hàng", reviews_data['customer_id'].nunique())
-        st.metric("⭐ Trung bình", f"{reviews_data['rating'].mean():.2f}")
+        st.metric("Khách hàng", reviews_data['customer_id'].nunique())
+        st.metric("Trung bình", f"{reviews_data['rating'].mean():.2f}")
     
     st.markdown("---")
     
-    # Nút xem so sánh hiệu năng các mô hình
-    st.subheader("📊 Phân tích Mô hình")
-    if st.button("📊 Xem so sánh hiệu năng 4 mô hình", use_container_width=True):
+    # Model analysis section
+    st.caption("🔬 Phân tích mô hình")
+    if st.button("Xem so sánh hiệu năng 4 mô hình", use_container_width=True):
         with st.spinner("⏳ Đang tính toán RMSE và MAE cho các mô hình..."):
             try:
                 # Import hàm so sánh mô hình
@@ -294,6 +235,47 @@ with st.sidebar:
                     os.chdir(original_cwd)
             except Exception as e:
                 st.error(f"❌ Lỗi khi tính toán: {str(e)}")
+    
+    # Implicit Feedback explanation expander
+    with st.expander("📘 Implicit Feedback là gì?", expanded=False):
+        st.caption(
+            "Implicit Feedback là hành vi người dùng không trực tiếp cho điểm mà hệ thống "
+            "tự quy đổi thành rating để huấn luyện mô hình."
+        )
+        
+        st.markdown("""
+<table style="width:100%;font-size:11px;border-collapse:collapse;">
+  <thead>
+    <tr style="background:#1a1a2e;color:white;">
+      <th style="padding:6px 4px;text-align:left;">Hành vi</th>
+      <th style="padding:6px 4px;text-align:center;">Rating</th>
+      <th style="padding:6px 4px;text-align:left;">Ý nghĩa</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:6px 4px;">🛒 Mua hàng</td>
+      <td style="padding:6px 4px;text-align:center;color:#f39c12;">★★★★★</td>
+      <td style="padding:6px 4px;">Yêu thích</td>
+    </tr>
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:6px 4px;">🛍️ Thêm giỏ</td>
+      <td style="padding:6px 4px;text-align:center;color:#f39c12;">★★★</td>
+      <td style="padding:6px 4px;">Quan tâm</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 4px;">👁️ Click xem</td>
+      <td style="padding:6px 4px;text-align:center;color:#f39c12;">★</td>
+      <td style="padding:6px 4px;">Tò mò</td>
+    </tr>
+  </tbody>
+</table>
+""", unsafe_allow_html=True)
+        
+        st.caption(
+            "Dữ liệu thực tế từ Tiki thường thiếu rating rõ ràng. Hệ thống quy đổi "
+            "hành vi ẩn thành điểm số để SVD có thể học được mô hình khuyến nghị."
+        )
 
 
 # ==================== MAIN CONTENT ====================
@@ -303,6 +285,94 @@ st.markdown(
     "để xử lý Cold-Start Problem"
 )
 st.markdown("---")
+
+# ========== HIỂN THỊ KẾT QUẢ TÌM KIẾM NGAY SAU HEADER ==========
+search_result_container = st.container()
+
+if st.session_state.get('do_search') and st.session_state.get('search_query'):
+    final_query = st.session_state.search_query
+    st.session_state.do_search = False
+
+    with search_result_container:
+        # Hàm tính TF-IDF Matrix
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        @st.cache_data
+        def build_tfidf_matrix(csv_path='data/clean_book_data.csv'):
+            full_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
+            df = pd.read_csv(full_path)
+            df = df.dropna(subset=['tokenized_desc'])
+            df = df.drop_duplicates(subset='product_id').reset_index(drop=True)
+            vectorizer = TfidfVectorizer(max_features=3000)
+            tfidf_matrix = vectorizer.fit_transform(df['tokenized_desc'])
+            return df, tfidf_matrix, vectorizer
+        
+        def find_similar_books(query_title, book_df, tfidf_matrix, top_n=5):
+            query_lower = query_title.lower().strip()
+            matches = book_df[book_df['title'].str.lower().str.contains(query_lower, na=False)]
+            
+            if matches.empty:
+                return None, None, "Không tìm thấy sách có tên phù hợp. Thử nhập tên khác!"
+            
+            source_book = matches.iloc[0]
+            source_idx  = matches.index[0]
+            source_vec = tfidf_matrix[source_idx]
+            cos_scores = cosine_similarity(source_vec, tfidf_matrix).flatten()
+            similar_indices = np.argsort(cos_scores)[::-1]
+            similar_indices = [i for i in similar_indices if i != source_idx][:top_n]
+            results = book_df.iloc[similar_indices].copy()
+            results['cosine_score'] = cos_scores[similar_indices]
+            return source_book, results, None
+        
+        with st.spinner(f"Đang tìm sách tương tự với '{final_query}'..."):
+            book_df_cosine, tfidf_matrix, vectorizer = build_tfidf_matrix()
+            source_book, similar_books, error = find_similar_books(
+                final_query, book_df_cosine, tfidf_matrix, top_n=5
+            )
+        
+        if error:
+            st.warning(f"⚠️ {error}")
+        else:
+            st.success(f"✅ Tìm thấy sách: **{source_book['title']}**")
+            st.markdown(f"📂 Danh mục: *{source_book.get('category','N/A')}*")
+            st.markdown("##### 📚 5 sách có nội dung tương tự nhất:")
+            cols = st.columns(5)
+            for i, (_, book) in enumerate(similar_books.iterrows()):
+                with cols[i]:
+                    title    = str(book.get('title','N/A'))
+                    category = str(book.get('category','N/A'))
+                    score    = float(book.get('cosine_score', 0))
+                    cover    = book.get('cover_link','')
+                    short_title = (title[:40]+'...') if len(title)>40 else title
+                    if pd.notna(cover) and str(cover).startswith('http'):
+                        img_html = f'<img src="{cover}" style="width:100%;height:200px;object-fit:cover;border-radius:8px 8px 0 0;">'
+                    else:
+                        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
+                    st.markdown(f"""
+                    <div style="border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;
+                                box-shadow:0 2px 8px rgba(0,0,0,0.08);background:white;
+                                margin-bottom:8px;text-align:center;">
+                        {img_html}
+                        <div style="padding:10px;">
+                            <div style="font-size:12px;font-weight:600;color:#1a1a2e;
+                                        min-height:36px;line-height:1.4;margin-bottom:4px;">
+                                {short_title}
+                            </div>
+                            <div style="font-size:11px;color:#6c757d;font-style:italic;
+                                        margin-bottom:8px;">📂 {category[:25]}</div>
+                            <div style="border-top:1px solid #f0f0f0;padding-top:8px;">
+                                <div style="font-size:22px;font-weight:700;color:#6C63FF;">
+                                    {score*100:.1f}%
+                                </div>
+                                <div style="font-size:10px;color:#999;">
+                                    Độ tương đồng Cosine
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            st.markdown("---")
 
 
 # ============ HIỂN THỊ BẢNG SO SÁNH NẾU CÓ YÊU CẦU ============
@@ -325,6 +395,87 @@ if st.session_state.get("show_comparison", False):
         st.caption("- **KNN Item-based** gợi ý dựa trên sản phẩm tương tự")
         st.caption("- **SVD** (Collaborative Filtering) gợi ý dựa trên người dùng tương tự")
         st.caption("- **Hybrid** kết hợp Content-Based (40%) + SVD (60%)")
+        
+        # Model comparison charts using Plotly
+        col1, col2 = st.columns(2)
+        
+        # Left chart - RMSE Comparison
+        with col1:
+            models = ["Content-Based", "KNN", "SVD", "Hybrid"]
+            rmse_values = [0, rmse_knn, rmse_cf, rmse_hybrid]
+            rmse_colors = ["#95a5a6", "#3498db", "#2ecc71", "#e67e22"]
+            
+            fig_rmse = go.Figure(data=[
+                go.Bar(
+                    x=models,
+                    y=rmse_values,
+                    marker_color=rmse_colors,
+                    text=[
+                        "N/A",
+                        f"{rmse_knn:.4f}",
+                        f"🏆 {rmse_cf:.4f}",
+                        f"✓ {rmse_hybrid:.4f}"
+                    ],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>RMSE: %{y:.4f}<extra></extra>"
+                )
+            ])
+            
+            fig_rmse.update_layout(
+                title="📊 So sánh RMSE (thấp hơn = tốt hơn)",
+                xaxis_title="Mô hình",
+                yaxis_title="RMSE",
+                showlegend=False,
+                hovermode="x unified",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(size=11),
+                height=400
+            )
+            
+            st.plotly_chart(fig_rmse, use_container_width=True)
+        
+        # Right chart - MAE Comparison
+        with col2:
+            mae_values = [0, mae_knn, mae_cf, mae_hybrid]
+            mae_colors = ["#95a5a6", "#3498db", "#2ecc71", "#e67e22"]
+            
+            fig_mae = go.Figure(data=[
+                go.Bar(
+                    x=models,
+                    y=mae_values,
+                    marker_color=mae_colors,
+                    text=[
+                        "N/A",
+                        f"🏆 {mae_knn:.4f}",
+                        f"{mae_cf:.4f}",
+                        f"{mae_hybrid:.4f}"
+                    ],
+                    textposition="outside",
+                    hovertemplate="<b>%{x}</b><br>MAE: %{y:.4f}<extra></extra>"
+                )
+            ])
+            
+            fig_mae.update_layout(
+                title="📊 So sánh MAE (thấp hơn = tốt hơn)",
+                xaxis_title="Mô hình",
+                yaxis_title="MAE",
+                showlegend=False,
+                hovermode="x unified",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(size=11),
+                height=400
+            )
+            
+            st.plotly_chart(fig_mae, use_container_width=True)
+        
+        # Explanation about Hybrid trade-off
+        st.info(
+            "💡 **Hybrid có RMSE cao hơn SVD nhưng là mô hình duy nhất giải quyết được Cold-Start Problem** — "
+            "gợi ý cho người dùng mới chưa có lịch sử đánh giá. Đây là ưu tiên hàng đầu trong "
+            "thực tế TMĐT Việt Nam với tỷ lệ người dùng mới cao."
+        )
         
         st.markdown("---")
     
@@ -635,343 +786,94 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
 else:
     st.header("👥 Kịch bản: Khách hàng cũ (Warm-Start)")
     
-    # Thông báo
+    # Thông báo ngắn gọn
     st.info(
-        f"✅ **Hệ thống nhận diện:** Khách hàng {selected_customer} có lịch sử đánh giá\n\n"
-        "→ **Kết hợp 2 mô hình đánh giá:**\n"
-        "  - Collaborative Filtering (SVD): 60% - Dự đoán rating dựa trên khách hàng tương tự\n"
-        "  - Content-Based Filtering: 40% - Dựa trên sách khách đã yêu thích (rating ≥ 4)\n\n"
-        "→ Chỉ gợi ý sách **chưa từng xem**"
+        f"✅ **Khách hàng {selected_customer}** có lịch sử đánh giá | "
+        "**Mô hình Hybrid:** 60% SVD + 40% Content-Based"
     )
     
-    # Nút lấy gợi ý
-    if st.button("🔍 Lấy gợi ý sách dành riêng cho bạn", key="btn_warm_start"):
-        # Lấy thông tin khách hàng
+    # Tạo TABS cho 3 chức năng chính
+    tab1, tab2, tab3 = st.tabs(["🛍️ Danh mục sách", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá"])
+    
+    # ============ TAB 1: DANH MỤC SÁCH ============
+    with tab1:
+        st.subheader("🛍️ Duyệt theo Danh mục")
+        
+        try:
+            book_df_full = pd.read_csv(os.path.join(DATA_DIR, 'book_data.csv'))
+            all_categories = ['Tất cả'] + sorted(
+                book_df_full['category'].dropna().unique().tolist()
+            )
+        except:
+            all_categories = ['Tất cả']
+        
+        # Selectbox để chọn danh mục
+        selected_cat = st.selectbox(
+            "Chọn danh mục:",
+            options=all_categories,
+            key="tab_category_select"
+        )
+        
+        if selected_cat != 'Tất cả':
+            try:
+                filtered_books = book_df_full[
+                    book_df_full['category'] == selected_cat
+                ].drop_duplicates('product_id').head(10)
+                
+                if not filtered_books.empty:
+                    render_category_books_grid(filtered_books, DATA_DIR, cols_per_row=5)
+            except Exception as e:
+                st.warning(f"⚠️ Lỗi khi tải dữ liệu danh mục: {str(e)}")
+        else:
+            st.info("💡 Chọn một danh mục để xem sách")
+    
+    # ============ TAB 2: GỢI Ý CHO BẠN ============
+    with tab2:
+        st.subheader("🎯 Sách được gợi ý cho bạn")
+        
+        # Thông tin khách hàng
         customer_reviews = reviews_data[reviews_data['customer_id'] == selected_customer]
         rated_books = customer_reviews['product_id'].tolist()
         avg_rating = customer_reviews['rating'].mean()
         
-        # Hiển thị thông tin khách hàng
-        st.subheader(f"👤 Thông tin Khách hàng {selected_customer}")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("📚 Sách đã đánh giá", len(rated_books))
-        with col2:
-            st.metric("⭐ Mức đánh giá trung bình", f"{avg_rating:.2f}")
-        with col3:
-            st.metric("🎯 Sở thích", "Sách yêu thích" if avg_rating >= 4 else "Khác biệt")
+        render_customer_info_metrics(len(rated_books), avg_rating)
         
-        st.markdown("---")
-        
-        with st.spinner("⏳ Đang tính toán gợi ý Hybrid (SVD + Content-Based)..."):
-            try:
-                recommendations = recommender.get_hybrid_recommendations(
-                    selected_customer,
-                    product_id_viewed=None,
-                    top_n=10,
-                    content_weight=0.4,
-                    collab_weight=0.6
-                )
-                
-                if recommendations.empty:
-                    st.warning("⚠️ Không có gợi ý - Khách hàng có thể đã đánh giá tất cả sách")
-                else:
-                    st.success(f"✅ Tìm thấy {len(recommendations)} cuốn sách phù hợp!")
+        # Nút lấy gợi ý
+        if st.button("🔍 Tính toán gợi ý Hybrid", key="btn_warm_start", use_container_width=True):
+            with st.spinner("⏳ Đang tính toán..."):
+                try:
+                    recommendations = recommender.get_hybrid_recommendations(
+                        selected_customer,
+                        product_id_viewed=None,
+                        top_n=10,
+                        content_weight=0.4,
+                        collab_weight=0.6
+                    )
                     
-                    # CSS custom cho card sách (Hybrid Model)
-                    st.markdown("""
-                    <style>
-                    .book-card {
-                        border: 1px solid #e0e0e0;
-                        border-radius: 12px;
-                        padding: 12px;
-                        margin-bottom: 16px;
-                        background: white;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                        text-align: center;
-                        height: 100%;
-                    }
-                    .book-card img {
-                        border-radius: 8px;
-                        width: 100%;
-                        object-fit: cover;
-                        height: 180px;
-                    }
-                    .book-title {
-                        font-size: 13px;
-                        font-weight: 600;
-                        color: #1a1a2e;
-                        margin-top: 10px;
-                        margin-bottom: 4px;
-                        line-height: 1.4;
-                        min-height: 40px;
-                    }
-                    .book-category {
-                        font-size: 11px;
-                        color: #6c757d;
-                        font-style: italic;
-                        margin-bottom: 6px;
-                        min-height: 20px;
-                    }
-                    .hybrid-score {
-                        font-size: 24px;
-                        font-weight: 700;
-                        color: #6C63FF;
-                        margin: 6px 0 2px;
-                    }
-                    .hybrid-label {
-                        font-size: 10px;
-                        color: #999;
-                        margin-bottom: 4px;
-                    }
-                    .divider-card {
-                        border-top: 1px solid #f0f0f0;
-                        margin: 8px 0;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-                    
-                    st.subheader("📚 Sách được gợi ý (Hybrid Model)")
-                    st.caption(f"Tìm thấy {len(recommendations)} sách · Mô hình: Hybrid (60% CF + 40% Content-based)")
-                    
-                    # Hiển thị 5 card mỗi hàng
-                    COLS_PER_ROW = 5
-                    rec_list = recommendations.reset_index(drop=True)
-                    
-                    for row_start in range(0, len(rec_list), COLS_PER_ROW):
-                        row_data = rec_list.iloc[row_start:row_start+COLS_PER_ROW]
-                        cols = st.columns(COLS_PER_ROW)
-                        for i, (_, book) in enumerate(row_data.iterrows()):
-                            with cols[i]:
-                                title    = str(book.get('title', 'N/A'))
-                                category = str(book.get('category', 'N/A'))
-                                score    = book.get('hybrid_score', book.get('score', 0))
-                                cover    = book.get('cover_link', '')
-                                short_title = (title[:45] + '...') if len(title) > 45 else title
-                                short_cat   = str(category)[:25]
-                                
-                                # Ảnh bìa
-                                if pd.notna(cover) and str(cover).startswith('http'):
-                                    img_html = f'<img src="{cover}" style="width:100%;height:180px;object-fit:cover;border-radius:8px;">'
-                                else:
-                                    img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
-                                
-                                # Format điểm Hybrid — nhân 100 nếu < 1, giữ nguyên nếu >= 1
-                                try:
-                                    score_f = float(score)
-                                    score_display = f"{score_f*100:.0f}%" if score_f <= 1 else f"{score_f:.2f}"
-                                except:
-                                    score_display = "N/A"
-                                
-                                st.markdown(f"""
-                                <div class="book-card">
-                                    {img_html}
-                                    <div class="book-title">{short_title}</div>
-                                    <div class="book-category">📂 {short_cat}</div>
-                                    <div class="divider-card"></div>
-                                    <div class="hybrid-score">{score_display}</div>
-                                    <div class="hybrid-label">Điểm Hybrid</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                # Expander chi tiết — đặt ngoài markdown
-                                with st.expander("📋 Chi tiết"):
-                                    st.write(f"**Tên sách:** {title}")
-                                    st.write(f"**Danh mục:** {category}")
-                                    try:
-                                        st.write(f"**Điểm Hybrid:** {float(score):.4f}")
-                                    except:
-                                        pass
-            
-            except Exception as e:
-                st.error(f"❌ Chi tiết lỗi: {repr(e)}")
-    
-    # ────────────────────────────────────────────
-    # SECTION MỚI: TÌM SÁCH TƯƠNG TỰ THEO NỘI DUNG (COSINE SIMILARITY)
-    # ────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("#### 🔍 Tìm sách tương tự theo nội dung (Cosine Similarity)")
-    st.caption("Nhập tên sách trên thanh tìm kiếm phía trên hoặc tại đây")
-    
-    # ── Hàm tính Cosine Similarity ──
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    
-    @st.cache_data
-    def build_tfidf_matrix(csv_path='data/clean_book_data.csv'):
-        """
-        Đọc clean_book_data.csv, dùng TF-IDF vectorize cột tokenized_desc.
-        Trả về: DataFrame sách, ma trận TF-IDF, vectorizer
-        """
-        # Điều chỉnh đường dẫn để sử dụng DATA_DIR
-        full_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
-        df = pd.read_csv(full_path)
-        df = df.dropna(subset=['tokenized_desc'])
-        df = df.drop_duplicates(subset='product_id').reset_index(drop=True)
-        vectorizer = TfidfVectorizer(max_features=5000)
-        tfidf_matrix = vectorizer.fit_transform(df['tokenized_desc'])
-        return df, tfidf_matrix, vectorizer
-    
-    def find_similar_books(query_title, book_df, tfidf_matrix, top_n=5):
-        """
-        Tìm sách có nội dung tương tự nhất với query_title.
-        Dùng Cosine Similarity trên ma trận TF-IDF.
-        
-        Bước 1: Tìm sách có tên gần giống query_title nhất
-        Bước 2: Lấy vector TF-IDF của sách đó
-        Bước 3: Tính Cosine Similarity với tất cả sách còn lại
-        Bước 4: Trả về top_n sách có similarity cao nhất
-        """
-        # Tìm sách khớp tên
-        query_lower = query_title.lower().strip()
-        matches = book_df[book_df['title'].str.lower().str.contains(query_lower, na=False)]
-        
-        if matches.empty:
-            return None, None, "Không tìm thấy sách có tên phù hợp. Thử nhập tên khác!"
-        
-        # Lấy sách đầu tiên khớp
-        source_book = matches.iloc[0]
-        source_idx  = matches.index[0]
-        
-        # Vector của sách nguồn
-        source_vec = tfidf_matrix[source_idx]
-        
-        # Tính Cosine Similarity với toàn bộ ma trận
-        cos_scores = cosine_similarity(source_vec, tfidf_matrix).flatten()
-        
-        # Sắp xếp giảm dần, bỏ chính nó (index source_idx)
-        similar_indices = np.argsort(cos_scores)[::-1]
-        similar_indices = [i for i in similar_indices if i != source_idx][:top_n]
-        
-        # Lấy kết quả
-        results = book_df.iloc[similar_indices].copy()
-        results['cosine_score'] = cos_scores[similar_indices]
-        
-        return source_book, results, None
-    
-    # ── Lấy từ khóa từ session_state (từ header) hoặc ô local ──
-    default_query = st.session_state.get('search_query', '')
-    
-    local_col1, local_col2 = st.columns([4, 1])
-    with local_col1:
-        local_input = st.text_input(
-            "Nhập tên sách:",
-            value=default_query,
-            placeholder="Ví dụ: Nhà Giả Kim, Đắc Nhân Tâm...",
-            key="cosine_local_input",
-            label_visibility="collapsed"
-        )
-    with local_col2:
-        local_btn = st.button("🔍 Tìm", key="cosine_local_btn",
-                              use_container_width=True)
-    
-    # Xác định từ khóa cuối cùng để tìm
-    final_query = ""
-    if local_btn and local_input:
-        final_query = local_input
-        st.session_state.search_query = local_input
-        st.session_state.do_search = True
-    elif st.session_state.get('do_search') and st.session_state.get('search_query'):
-        final_query = st.session_state.search_query
-        st.session_state.do_search = False  # reset sau khi đã tìm
-    
-    # Thực hiện tìm kiếm
-    if final_query:
-        with st.spinner(f"Đang tìm sách tương tự với '{final_query}'..."):
-            book_df_cosine, tfidf_matrix, vectorizer = build_tfidf_matrix()
-            source_book, similar_books, error = find_similar_books(
-                final_query, book_df_cosine, tfidf_matrix, top_n=5
-            )
-        
-        if error:
-            st.warning(f"⚠️ {error}")
-        else:
-            # Hiển thị sách nguồn đang tìm
-            st.success(f"✅ Tìm thấy sách: **{source_book['title']}**")
-            
-            src_col1, src_col2 = st.columns([1, 4])
-            with src_col1:
-                src_cover = source_book.get('cover_link', '')
-                if pd.notna(src_cover) and str(src_cover).startswith('http'):
-                    st.image(src_cover, width=120)
-                else:
-                    st.markdown("📚")
-            with src_col2:
-                st.markdown(f"**📖 {source_book['title']}**")
-                st.markdown(f"📂 Danh mục: *{source_book.get('category', 'N/A')}*")
-                st.markdown("↓ Tìm 5 sách có nội dung mô tả giống nhất:")
-            
-            st.markdown("##### 📚 5 sách có nội dung tương tự nhất:")
-            
-            # Hiển thị 5 card đồng đều
-            cols = st.columns(5)
-            for i, (_, book) in enumerate(similar_books.iterrows()):
-                with cols[i]:
-                    title    = str(book.get('title', 'N/A'))
-                    category = str(book.get('category', 'N/A'))
-                    score    = float(book.get('cosine_score', 0))
-                    cover    = book.get('cover_link', '')
-                    short_title = (title[:40] + '...') if len(title) > 40 else title
-
-                    if pd.notna(cover) and str(cover).startswith('http'):
-                        img_html = f'<img src="{cover}" style="width:100%;height:200px;object-fit:cover;border-radius:8px 8px 0 0;">'
+                    if recommendations.empty:
+                        st.warning("⚠️ Không có gợi ý - Bạn đã đánh giá tất cả sách")
                     else:
-                        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
-
-                    st.markdown(f"""
-                    <div style="border:1px solid #e0e0e0; border-radius:12px; overflow:hidden;
-                                box-shadow:0 2px 8px rgba(0,0,0,0.08); background:white;
-                                margin-bottom:8px; text-align:center;">
-                        {img_html}
-                        <div style="padding:10px;">
-                            <div style="font-size:12px; font-weight:600; color:#1a1a2e;
-                                        min-height:36px; line-height:1.4; margin-bottom:4px;">
-                                {short_title}
-                            </div>
-                            <div style="font-size:11px; color:#6c757d; font-style:italic;
-                                        margin-bottom:8px;">
-                                📂 {category[:25]}
-                            </div>
-                            <div style="border-top:1px solid #f0f0f0; padding-top:8px;">
-                                <div style="font-size:22px; font-weight:700; color:#6C63FF;">
-                                    {score*100:.1f}%
-                                </div>
-                                <div style="font-size:10px; color:#999;">
-                                    Độ tương đồng Cosine
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            # Giải thích kỹ thuật
-            with st.expander("ℹ️ Cách hoạt động của Cosine Similarity"):
-                st.markdown("""
-                **Các bước tính toán:**
-                1. **TF-IDF Vectorization**: Chuyển mô tả sách thành vector số (5.000 đặc trưng)
-                2. **Cosine Similarity**: Tính góc giữa 2 vector — góc càng nhỏ, nội dung càng giống
-                3. **Công thức**: `cos(θ) = (A·B) / (||A|| × ||B||)`
-                4. **Kết quả**: 100% = giống hệt · 0% = hoàn toàn khác nhau
-                """)
+                        st.success(f"✅ Tìm thấy {len(recommendations)} sách phù hợp!")
+                        render_hybrid_recommendations_grid(recommendations, cols_per_row=5)
+                
+                except Exception as e:
+                    st.error(f"❌ Lỗi: {repr(e)}")
+        
+        st.info("💡 Bấm nút để tính toán gợi ý dựa trên lịch sử đánh giá của bạn")
     
-    # Hiển thị lịch sử đánh giá
-    with st.expander("📋 Lịch sử đánh giá của bạn"):
+    # ============ TAB 3: LỊCH SỬ ĐÁNH GIÁ ============
+    with tab3:
+        st.subheader("📋 Lịch sử đánh giá của bạn")
+        
         customer_reviews = reviews_data[reviews_data['customer_id'] == selected_customer]
         customer_reviews_display = customer_reviews.copy()
         customer_reviews_display['product_title'] = customer_reviews_display['product_id'].map(book_dict)
         customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating']]
         customer_reviews_display.columns = ['ID Sách', 'Tên Sách', 'Đánh giá']
-        st.dataframe(customer_reviews_display, use_container_width=True)
+        
+        st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sách đã đánh giá")
+        st.dataframe(customer_reviews_display, use_container_width=True, hide_index=True)
 
 
 # ==================== FOOTER ====================
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center'>
-    <p><small>💡 Hybrid Recommendation System | Cold-Start Problem Solution</small></p>
-    <p><small>Powered by: Scikit-Learn (TF-IDF) + Surprise (SVD) + Streamlit</small></p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+render_footer()

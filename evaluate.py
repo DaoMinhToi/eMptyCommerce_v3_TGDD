@@ -7,6 +7,7 @@ RMSE = √(Σ(y_true - y_pred)² / n)
 RMSE càng nhỏ, mô hình dự đoán càng chính xác.
 """
 
+import os
 import pandas as pd
 import numpy as np
 from surprise import SVD, Dataset, Reader, accuracy
@@ -36,7 +37,8 @@ def evaluate_svd_model():
     # ========== BƯỚC 1: ĐỌC DỮ LIỆU ==========
     print("\n📖 Bước 1: Đọc dữ liệu từ file clean_reviews.csv...")
     try:
-        reviews_df = pd.read_csv('eMptyCommerce/data/clean_reviews.csv')
+        DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'eMptyCommerce', 'data', 'clean_reviews.csv')
+        reviews_df = pd.read_csv(DATA_PATH)
         print(f"   ✓ Đã đọc {len(reviews_df)} bản ghi đánh giá")
         print(f"   ✓ Cột dữ liệu: {reviews_df.columns.tolist()}")
         print(f"   ✓ Khách hàng duy nhất: {reviews_df['customer_id'].nunique()}")

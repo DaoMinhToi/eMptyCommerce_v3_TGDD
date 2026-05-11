@@ -126,7 +126,7 @@ class HybridRecommender:
         try:
             # Bước 1: Fit TF-IDF Vectorizer
             self.tfidf_vectorizer = TfidfVectorizer(
-                max_features=500,  # Giới hạn 500 từ quan trọng nhất
+                max_features=3000,  # Giới hạn 3000 từ quan trọng nhất (cân bằng tốc độ và độ chính xác)
                 ngram_range=(1, 2),  # Sử dụng unigram và bigram
                 min_df=2,  # Từ phải xuất hiện ít nhất 2 lần
                 max_df=0.8,  # Từ không xuất hiện quá 80% document
@@ -325,11 +325,60 @@ class HybridRecommender:
             # Nếu không có sản phẩm tham chiếu -> Trả về sản phẩm phổ biến nhất
             else:
                 print(f"   → Không có sản phẩm tham chiếu → Trả về sản phẩm phổ biến nhất")
-                popular_products = self.book_data.nlargest(top_n, 'n_review')[
-                    ['product_id', 'title', 'category', 'cover_link', 'n_review']
-                ].copy()
-                popular_products.rename(columns={'n_review': 'popularity_score'}, inplace=True)
-                return popular_products
+                try:
+                    # Load book_data.csv (chứa n_review và avg_rating)
+                    book_data_path = os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), 
+                        'data', 'book_data.csv'
+                    )
+                    book_data_full = pd.read_csv(book_data_path)
+                    
+                    # Xử lý dữ liệu - deduplicate with keep='first'
+                    book_data_full = book_data_full.drop_duplicates(subset='product_id', keep='first')
+                    book_data_full = book_data_full.dropna(subset=['n_review', 'avg_rating'])
+                    
+                    # Tính Bayesian Average Score
+                    m = book_data_full['n_review'].quantile(0.6)
+                    C = book_data_full['avg_rating'].mean()
+                    book_data_full['popularity_score'] = (
+                        (book_data_full['n_review'] / (book_data_full['n_review'] + m)) * 
+                        book_data_full['avg_rating'] + 
+                        (m / (book_data_full['n_review'] + m)) * C
+                    )
+                    
+                    # Lọc: chỉ giữ sản phẩm có n_review >= m
+                    book_data_full = book_data_full[book_data_full['n_review'] >= m]
+                    
+                    # Deduplicate self.book_data before merge (local copy, not modifying self)
+                    clean_book_data = self.book_data.drop_duplicates(subset='product_id', keep='first')
+                    
+                    # Merge với self.book_data để lấy cover_link từ clean_book_data
+                    merged = book_data_full.merge(
+                        clean_book_data[['product_id', 'cover_link']], 
+                        on='product_id', 
+                        how='left',
+                        suffixes=('', '_clean')
+                    )
+                    
+                    # Sử dụng cover_link từ clean_book_data nếu có, nếu không thì dùng từ book_data
+                    merged['cover_link'] = merged['cover_link_clean'].fillna(merged['cover_link'])
+                    
+                    # Final safety dedup after merge to prevent any remaining duplicates
+                    merged = merged.drop_duplicates(subset='product_id', keep='first')
+                    
+                    # Sắp xếp theo popularity_score giảm dần, lấy top_n
+                    popular_products = merged.nlargest(top_n, 'popularity_score')[
+                        ['product_id', 'title', 'category', 'cover_link', 'popularity_score']
+                    ].copy()
+                    
+                    return popular_products
+                
+                except Exception as e:
+                    print(f"     Lỗi khi tính popularity: {str(e)}")
+                    # Fallback: trả về top_n sản phẩm đầu tiên từ clean_book_data
+                    fallback = self.book_data.head(top_n).copy()
+                    fallback['popularity_score'] = 0
+                    return fallback[['product_id', 'title', 'category', 'cover_link', 'popularity_score']]
         
         # ============ TRƯỜNG HỢP 2: WARM-START ============
         else:
