@@ -23,7 +23,20 @@ def render_search_bar(session_state):
         header_btn = st.button("Tìm kiếm", key="header_search_btn",
                                use_container_width=True)
 
+    # Trigger search when button clicked OR when Enter pressed (input changed)
+    should_search = False
+    
     if header_btn and header_input:
+        # User clicked the button
+        should_search = True
+    elif header_input and header_input != session_state.get('last_input', ''):
+        # User pressed Enter (input value changed and is non-empty)
+        should_search = True
+    
+    # Always track last input value
+    session_state.last_input = header_input
+    
+    if should_search:
         session_state.search_query = header_input
         session_state.do_search = True
         st.rerun()

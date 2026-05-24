@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import os
 import plotly.graph_objects as go
+import psutil
 from recommender import HybridRecommender
 from styles import apply_header_styles, render_header, render_footer
 from ui_components import (
@@ -15,6 +16,24 @@ from ui_components import (
     render_cosine_search_results_grid, render_customer_info_metrics, 
     render_search_result_container
 )
+
+
+# ==================== HÀM ĐO LƯỜNG RAM ====================
+def get_current_ram_mb():
+    """
+    Tính toán lượng RAM tiến trình hiện tại đang chiếm dụng (đơn vị MB).
+    Sử dụng thư viện psutil để lấy số liệu chính xác.
+    """
+    process = psutil.Process(os.getpid())
+    ram_info = process.memory_info()
+    ram_mb = ram_info.rss / (1024 * 1024)  # Chuyển từ bytes sang MB
+    return ram_mb
+
+
+# ==================== BIẾN TOÀN CỤC LƯU CHECKPOINT ====================
+checkpoint_1_ram = None  # RAM tại Checkpoint 1 (Idle)
+checkpoint_2_ram = None  # RAM tại Checkpoint 2 (Sau load data)
+checkpoint_3_ram = None  # RAM tại Checkpoint 3 (Sau gọi hàm gợi ý)
 
 
 # ==================== CẤU HÌNH TRANG ====================
@@ -35,6 +54,12 @@ if 'search_query' not in st.session_state:
     st.session_state.search_query = ''
 if 'do_search' not in st.session_state:
     st.session_state.do_search = False
+if 'last_input' not in st.session_state:
+    st.session_state.last_input = ''
+
+# Khởi tạo session_state cho loại khách hàng
+if 'customer_type' not in st.session_state:
+    st.session_state.customer_type = "🆕 Khách hàng mới (Cold-Start)"
 
 # Áp dụng CSS styles
 apply_header_styles()
@@ -44,6 +69,13 @@ render_header()
 
 # Render search bar
 render_search_bar(st.session_state)
+
+
+# ==================== CHECKPOINT 1: ĐO RAM - TRẠNG THÁI IDLE BAN ĐẦU ====================
+checkpoint_1_ram = get_current_ram_mb()
+print(f"\n[ĐO RAM] ===== CHECKPOINT 1: TRẠNG THÁI IDLE BAN ĐẦU =====")
+print(f"[ĐO RAM] Sau khi ứng dụng vừa khởi động: {checkpoint_1_ram:.2f} MB")
+print(f"[ĐO RAM] =====================================================\n")
 
 
 # ==================== CACHE RESOURCE ====================
@@ -151,6 +183,15 @@ if book_data is None or reviews_data is None:
     st.error("❌ Lỗi: Không thể tải dữ liệu. Vui lòng kiểm tra file trong thư mục data/")
     st.stop()
 
+
+# ==================== CHECKPOINT 2: ĐO RAM - SAU KHI LOAD DỮ LIỆU & NẠP MÔ HÌNH ====================
+checkpoint_2_ram = get_current_ram_mb()
+checkpoint_2_increase = checkpoint_2_ram - checkpoint_1_ram
+print(f"\n[ĐO RAM] ===== CHECKPOINT 2: SAU KHI LOAD DỮ LIỆU & NẠP MÔ HÌNH =====")
+print(f"[ĐO RAM] Sau khi Load Model và Dữ liệu: {checkpoint_2_ram:.2f} MB")
+print(f"[ĐO RAM] Tăng thêm so với Checkpoint 1: {checkpoint_2_increase:.2f} MB")
+print(f"[ĐO RAM] ================================================================\n")
+
 # Danh sách khách hàng duy nhất
 unique_customers = sorted(reviews_data['customer_id'].unique().tolist())
 customer_dict = {cid: f"Customer {cid}" for cid in unique_customers}
@@ -186,8 +227,13 @@ with st.sidebar:
     customer_type = st.radio(
         "Loại khách hàng:",
         ["👥 Khách hàng cũ", "🆕 Khách hàng mới (Cold-Start)"],
+        index=["👥 Khách hàng cũ", "🆕 Khách hàng mới (Cold-Start)"].index(
+            st.session_state.customer_type
+        ),
+        key="customer_type_radio",
         label_visibility="collapsed"
     )
+    st.session_state.customer_type = customer_type
     
     if customer_type == "👥 Khách hàng cũ":
         selected_customer = st.selectbox(
@@ -293,21 +339,17 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
     st.session_state.do_search = False
 
     with search_result_container:
-        # Hàm tính TF-IDF Matrix
-        from sklearn.feature_extraction.text import TfidfVectorizer
+        # Ùng dụng cosine similarity từ model Đằng tải (duạng thẳng từ recommender module)
         from sklearn.metrics.pairwise import cosine_similarity
         
-        @st.cache_data
-        def build_tfidf_matrix(csv_path='data/clean_book_data.csv'):
-            full_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
-            df = pd.read_csv(full_path)
-            df = df.dropna(subset=['tokenized_desc'])
-            df = df.drop_duplicates(subset='product_id').reset_index(drop=True)
-            vectorizer = TfidfVectorizer(max_features=3000)
-            tfidf_matrix = vectorizer.fit_transform(df['tokenized_desc'])
-            return df, tfidf_matrix, vectorizer
-        
-        def find_similar_books(query_title, book_df, tfidf_matrix, top_n=5):
+        def find_similar_books(query_title, top_n=5):
+            """
+            Tìm sách tương tự dựa trên TF-IDF từ recommender module.
+            Đảm bảo kết quả consistent với Content-Based model.
+            """
+            book_df = recommender.book_data
+            tfidf_matrix = recommender.tfidf_matrix
+            
             query_lower = query_title.lower().strip()
             matches = book_df[book_df['title'].str.lower().str.contains(query_lower, na=False)]
             
@@ -315,7 +357,7 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
                 return None, None, "Không tìm thấy sách có tên phù hợp. Thử nhập tên khác!"
             
             source_book = matches.iloc[0]
-            source_idx  = matches.index[0]
+            source_idx = matches.index[0]
             source_vec = tfidf_matrix[source_idx]
             cos_scores = cosine_similarity(source_vec, tfidf_matrix).flatten()
             similar_indices = np.argsort(cos_scores)[::-1]
@@ -325,10 +367,7 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
             return source_book, results, None
         
         with st.spinner(f"Đang tìm sách tương tự với '{final_query}'..."):
-            book_df_cosine, tfidf_matrix, vectorizer = build_tfidf_matrix()
-            source_book, similar_books, error = find_similar_books(
-                final_query, book_df_cosine, tfidf_matrix, top_n=5
-            )
+            source_book, similar_books, error = find_similar_books(final_query, top_n=5)
         
         if error:
             st.warning(f"⚠️ {error}")
@@ -530,6 +569,15 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                     selected_book_id,
                     top_n=10
                 )
+                
+                # ==================== CHECKPOINT 3: ĐO RAM - SAU GỌI HÀM DỰ ĐOÁN/GỢI Ý ====================
+                checkpoint_3_ram = get_current_ram_mb()
+                checkpoint_3_increase = checkpoint_3_ram - checkpoint_2_ram
+                print(f"\n[ĐO RAM] ===== CHECKPOINT 3: SAU KHI GỌI HÀM DỰ ĐOÁN/GỢI Ý (Content-Based) =====")
+                print(f"[ĐO RAM] Sau khi tính toán TF-IDF và Cosine Similarity: {checkpoint_3_ram:.2f} MB")
+                print(f"[ĐO RAM] Tăng thêm so với Checkpoint 2: {checkpoint_3_increase:.2f} MB")
+                print(f"[ĐO RAM] Tổng tăng từ lúc khởi động: {checkpoint_3_ram - checkpoint_1_ram:.2f} MB")
+                print(f"[ĐO RAM] ============================================================================\n")
                 
                 if recommendations.empty:
                     st.warning("⚠️ Không tìm thấy sách tương tự")
@@ -850,6 +898,15 @@ else:
                         content_weight=0.4,
                         collab_weight=0.6
                     )
+                    
+                    # ==================== CHECKPOINT 3: ĐO RAM - SAU GỌI HÀM DỰ ĐOÁN/GỢI Ý ====================
+                    checkpoint_3_ram = get_current_ram_mb()
+                    checkpoint_3_increase = checkpoint_3_ram - checkpoint_2_ram
+                    print(f"\n[ĐO RAM] ===== CHECKPOINT 3: SAU KHI GỌI HÀM DỰ ĐOÁN/GỢI Ý (Hybrid SVD + Content-Based) =====")
+                    print(f"[ĐO RAM] Sau khi tính toán SVD và Content-Based (40% + 60%): {checkpoint_3_ram:.2f} MB")
+                    print(f"[ĐO RAM] Tăng thêm so với Checkpoint 2: {checkpoint_3_increase:.2f} MB")
+                    print(f"[ĐO RAM] Tổng tăng từ lúc khởi động: {checkpoint_3_ram - checkpoint_1_ram:.2f} MB")
+                    print(f"[ĐO RAM] =======================================================================================\n")
                     
                     if recommendations.empty:
                         st.warning("⚠️ Không có gợi ý - Bạn đã đánh giá tất cả sách")
