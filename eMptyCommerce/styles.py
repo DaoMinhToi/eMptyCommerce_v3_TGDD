@@ -20,9 +20,18 @@ div[data-testid="stAppViewContainer"] > div:first-child { margin-top: 0; }
 """, unsafe_allow_html=True)
 
 
-def render_header():
-    """Render header bar cố định ở đầu trang"""
-    st.markdown("""
+def render_header(n_books: int = 1657, n_customers: int = 77660):
+    """Render header bar cố định ở đầu trang
+    
+    Args:
+        n_books: Số lượng sách trong database
+        n_customers: Số lượng khách hàng trong database
+    """
+    # Format số liệu theo kiểu Việt Nam (1.657 thay vì 1,657)
+    books_display = f"{n_books:,}".replace(",", ".")
+    customers_display = f"{n_customers:,}".replace(",", ".")
+    
+    st.markdown(f"""
 <div style="
     position:fixed; top:0; left:0; right:0; z-index:9999;
     background:linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
@@ -57,11 +66,11 @@ def render_header():
     <div style="flex:1;"></div>
     <div style="display:flex;gap:16px;flex-shrink:0;">
         <div style="text-align:center;">
-            <div style="color:white;font-size:14px;font-weight:700;">1.657</div>
+            <div style="color:white;font-size:14px;font-weight:700;">{books_display}</div>
             <div style="color:rgba(255,255,255,0.5);font-size:10px;">Đầu sách</div>
         </div>
         <div style="text-align:center;">
-            <div style="color:white;font-size:14px;font-weight:700;">77.660</div>
+            <div style="color:white;font-size:14px;font-weight:700;">{customers_display}</div>
             <div style="color:rgba(255,255,255,0.5);font-size:10px;">Khách hàng</div>
         </div>
     </div>

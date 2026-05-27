@@ -4,6 +4,15 @@ Minh họa Cold-Start Problem & Hybrid Recommendation System
 """
 
 import streamlit as st
+
+# ==================== CẤU HÌNH TRANG - PHẢI LÀ LỆNH ĐẦU TIÊN ====================
+st.set_page_config(
+    page_title="eMpTyCommerce - Gợi ý thông minh",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ==================== IMPORTS ====================
 import pandas as pd
 import numpy as np
 import os
@@ -16,6 +25,12 @@ from ui_components import (
     render_cosine_search_results_grid, render_customer_info_metrics, 
     render_search_result_container
 )
+from ai_chat_widget import render_simple_floating_button
+from ai_utils import init_gemini_api
+
+
+# ==================== CẤU HÌNH GEMINI API ====================
+GEMINI_AVAILABLE = init_gemini_api()
 
 
 # ==================== HÀM ĐO LƯỜNG RAM ====================
@@ -35,14 +50,6 @@ checkpoint_1_ram = None  # RAM tại Checkpoint 1 (Idle)
 checkpoint_2_ram = None  # RAM tại Checkpoint 2 (Sau load data)
 checkpoint_3_ram = None  # RAM tại Checkpoint 3 (Sau gọi hàm gợi ý)
 
-
-# ==================== CẤU HÌNH TRANG ====================
-st.set_page_config(
-    page_title="eMpTyCommerce - Gợi ý thông minh",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # Lấy đường dẫn của thư mục app hiện tại
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(APP_DIR, 'data')
@@ -61,11 +68,20 @@ if 'last_input' not in st.session_state:
 if 'customer_type' not in st.session_state:
     st.session_state.customer_type = "🆕 Khách hàng mới (Cold-Start)"
 
+# ==================== KHỞI TẠO SESSION STATE CHO CHAT AI ====================
+# Lịch sử cuộc trò chuyện với AI Trợ lý tư vấn sách
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# Ghi nhận ID khách hàng hiện tại để detect khi người dùng thay đổi
+if 'current_customer_id' not in st.session_state:
+    st.session_state.current_customer_id = None
+
+# Lưu trạng thái Gemini API vào session_state
+st.session_state.gemini_available = GEMINI_AVAILABLE
+
 # Áp dụng CSS styles
 apply_header_styles()
-
-# Render các component header
-render_header()
 
 # Render search bar
 render_search_bar(st.session_state)
@@ -183,6 +199,12 @@ if book_data is None or reviews_data is None:
     st.error("❌ Lỗi: Không thể tải dữ liệu. Vui lòng kiểm tra file trong thư mục data/")
     st.stop()
 
+# Render header với số liệu thực tế
+render_header(
+    n_books=len(book_data),
+    n_customers=reviews_data['customer_id'].nunique()
+)
+
 
 # ==================== CHECKPOINT 2: ĐO RAM - SAU KHI LOAD DỮ LIỆU & NẠP MÔ HÌNH ====================
 checkpoint_2_ram = get_current_ram_mb()
@@ -213,7 +235,7 @@ with st.sidebar:
     
     # Collapsed project info (Thesis + Student info)
     with st.expander("ℹ️ Thông tin dự án", expanded=False):
-        st.caption("**Đề tài:** Hệ thống gợi ý sản phẩm thương mại điện tử bằng Tiếng Việt")
+        st.caption("**Đề tài:** Nghiên cứu và xây dựng hệ thống gợi ý sản phẩm thương mại điện tử dựa trên mô hình lai (Hybrid) kết hợp đặc trưng nội dung và tương tác người dùng")
         st.caption("**Phương pháp:** Hybrid Model (Content-Based + Collaborative Filtering)")
         st.caption("**Mô hình:** TF-IDF + SVD")
         st.divider()
@@ -227,6 +249,9 @@ with st.sidebar:
         st.session_state.search_query = ''
         st.session_state.do_search = False
         st.session_state.last_input = ''
+        # ==================== XÓA CHAT KHI ĐỔI KỊCH BẢN ====================
+        st.session_state.messages = []
+        st.session_state.current_customer_id = None
     
     # Scenario selection - cleaner label
     st.markdown("**🎯 Chọn kịch bản**")
@@ -244,13 +269,26 @@ with st.sidebar:
     st.session_state.customer_type = customer_type
     
     if customer_type == "👥 Khách hàng cũ":
+        # ==================== CALLBACK KHI ĐỔI CUSTOMER ID ====================
+        def on_customer_change():
+            new_customer_id = st.session_state.get("customer_selectbox")
+            if new_customer_id != st.session_state.current_customer_id:
+                st.session_state.messages = []
+                st.session_state.current_customer_id = new_customer_id
+        
         selected_customer = st.selectbox(
             "🔑 Đăng nhập với ID Khách hàng:",
             unique_customers,
-            format_func=lambda x: customer_dict[x]
+            format_func=lambda x: customer_dict[x],
+            key="customer_selectbox",
+            on_change=on_customer_change
         )
+        
+        # Cập nhật current_customer_id
+        st.session_state.current_customer_id = selected_customer
     else:
         selected_customer = None
+        st.session_state.current_customer_id = None
     
     st.markdown("---")
     
@@ -947,6 +985,12 @@ else:
         
         st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sách đã đánh giá")
         st.dataframe(customer_reviews_display, use_container_width=True, hide_index=True)
+
+
+# ==================== FLOATING CHAT WIDGET - TRỢ LỰC AI TƯ VẤN SÁCH ====================
+# Chỉ hiển thị khi Gemini API sẵn có
+if GEMINI_AVAILABLE:
+    render_simple_floating_button()
 
 
 # ==================== FOOTER ====================

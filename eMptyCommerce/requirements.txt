@@ -6,3 +6,4 @@ pyvi==0.1.1
 scikit-surprise==1.1.4
 plotly==5.24.1
 psutil==6.0.0
+google-generativeai>=0.8.0

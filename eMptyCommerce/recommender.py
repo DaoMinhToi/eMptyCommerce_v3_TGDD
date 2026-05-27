@@ -114,7 +114,7 @@ class HybridRecommender:
         1. Sử dụng TF-IDF (Term Frequency - Inverse Document Frequency) để chuyển đổi
            các mô tả sản phẩm (tokenized_desc) thành vector số
         2. Tính ma trận độ tương đồng giữa các sản phẩm bằng Cosine Similarity
-           (từ -1 đến 1, cao hơn = tương đồng hơn)
+           (từ 0 đến 1, vì TF-IDF không có giá trị âm — cao hơn = tương đồng hơn)
         3. Lưu lại vectorizer và ma trận để dùng sau
         
         Công thức Cosine Similarity: cos(θ) = (A·B) / (||A|| * ||B||)
@@ -182,6 +182,10 @@ class HybridRecommender:
             rating_min = self.reviews_data['rating'].min()
             rating_max = self.reviews_data['rating'].max()
             
+            # Lưu rating scale để dùng trong get_hybrid_recommendations()
+            self.rating_min = rating_min
+            self.rating_max = rating_max
+            
             self.reader = Reader(rating_scale=(rating_min, rating_max))
             
             # Bước 2: Load dữ liệu
@@ -218,7 +222,7 @@ class HybridRecommender:
                 'user_based': False, 
                 'min_support': 2
             }
-            self.knn_model = KNNBasic(sim_options=sim_options, random_state=42)
+            self.knn_model = KNNWithMeans(k=20, sim_options=sim_options, verbose=False)
             self.knn_model.fit(self.trainset)
             
             print(f"    Collaborative Filtering huấn luyện thành công!")
@@ -433,8 +437,9 @@ class HybridRecommender:
             # Kết hợp scores
             hybrid_scores = {}
             for product_id in unrated_products:
-                # Normalize scores về [0, 1]
-                normalized_svd = (svd_scores[product_id] - 1) / 4  # Rating là 1-5
+                # Normalize scores về [0, 1] dựa trên rating scale được detect
+                rating_range = self.rating_max - self.rating_min
+                normalized_svd = (svd_scores[product_id] - self.rating_min) / rating_range if rating_range > 0 else 0
                 normalized_svd = max(0, min(1, normalized_svd))  # Clip to [0, 1]
                 normalized_content = content_scores[product_id]  # Cosine sim đã là [0, 1]
                 

@@ -68,10 +68,9 @@ def get_rmse_knn():
         train_df[['customer_id', 'product_id', 'rating']], reader)
     trainset = train_data.build_full_trainset()
     
-    # Chuẩn bị testset
-    test_data = Dataset.load_from_df(
-        test_df[['customer_id', 'product_id', 'rating']], reader)
-    testset = test_data.build_full_trainset().build_testset()
+    # Chuẩn bị testset - tạo trực tiếp từ test_df để tránh lỗi anti-testset
+    testset = [(row['customer_id'], row['product_id'], row['rating']) 
+               for _, row in test_df.iterrows()]
     
     # Bước 4: Tạo và huấn luyện mô hình Item-based KNN
     sim_options = {
