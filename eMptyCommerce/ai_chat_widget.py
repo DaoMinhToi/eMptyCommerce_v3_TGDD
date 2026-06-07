@@ -264,8 +264,8 @@ def display_ai_message_with_images(ai_response):
     Args:
         ai_response: Text phản hồi từ AI
     """
-    # Hiển thị text của AI
-    st.write(f"**eMpTy AI:** {ai_response[:150]}..." if len(ai_response) > 150 else f"**eMpTy AI:** {ai_response}")
+    # Hiển thị text của AI (Hiển thị toàn bộ câu trả lời, không cắt ngắn)
+    st.write(f"**eMpTy AI:** {ai_response}")
     
     # Tìm các tiêu đề sách trong response (các text trong ngoặc kép)
     # Pattern: "Tên Sách" hoặc Tên Sách
@@ -323,17 +323,8 @@ def render_simple_floating_button():
             st.markdown("### 🤖 eMpTy AI - Tư vấn Sách")
             st.divider()
             
-            # Hiển thị lịch sử chat
-            messages = st.session_state.get("messages", [])
-            
-            # Container cho chat messages
-            with st.container(height=350, border=False):
-                for msg in messages:
-                    if msg["role"] == "user":
-                        st.write(f"**Bạn:** {msg['content']}")
-                    else:
-                        # Hiển thị AI message với hình ảnh
-                        display_ai_message_with_images(msg['content'])
+            # 1. Tạo placeholder cho chat messages ở phía trên form
+            chat_placeholder = st.empty()
             
             # Input area using form
             st.divider()
@@ -376,7 +367,16 @@ def render_simple_floating_button():
                     })
                     
                     st.success("✅ Phản hồi hoàn tất!", icon="✅")
-                    st.rerun()
+
+            # 2. Vẽ lịch sử chat vào placeholder (đã có tin nhắn mới nếu vừa gửi)
+            messages = st.session_state.get("messages", [])
+            with chat_placeholder.container(height=350, border=False):
+                for msg in messages:
+                    if msg["role"] == "user":
+                        st.write(f"**Bạn:** {msg['content']}")
+                    else:
+                        # Hiển thị AI message với hình ảnh
+                        display_ai_message_with_images(msg['content'])
     
     except Exception as e:
         st.warning(f"Không thể hiển thị chat widget: {str(e)}")

@@ -5,8 +5,9 @@ Module AI Utilities - Các hàm liên quan đến Gemini API
 import streamlit as st
 import google.generativeai as genai
 
-# Global cache cho model name
+# Global cache cho model name và API Key
 _AVAILABLE_MODEL = None
+_LAST_API_KEY = None
 
 # ==================== CẤU HÌNH GEMINI API ====================
 def init_gemini_api():
@@ -16,15 +17,21 @@ def init_gemini_api():
     Returns:
         bool: True nếu API sẵn có, False nếu không
     """
+    global _AVAILABLE_MODEL, _LAST_API_KEY
     try:
         gemini_api_key = st.secrets.get("GEMINI_API_KEY")
         if gemini_api_key:
-            genai.configure(api_key=gemini_api_key)
-            # Tìm model khả dụng
-            _detect_available_model()
+            # Chỉ cấu hình và quét model nếu API Key có sự thay đổi
+            if gemini_api_key != _LAST_API_KEY:
+                genai.configure(api_key=gemini_api_key)
+                _LAST_API_KEY = gemini_api_key
+                _AVAILABLE_MODEL = None  # Reset cache model cũ
+                _detect_available_model()
             return True
         else:
             print("⚠️ GEMINI_API_KEY không được tìm thấy trong .streamlit/secrets.toml")
+            _AVAILABLE_MODEL = None
+            _LAST_API_KEY = None
             return False
     except Exception as e:
         print(f"⚠️ Lỗi cấu hình Gemini API: {e}")
@@ -37,10 +44,30 @@ def _detect_available_model():
     """
     global _AVAILABLE_MODEL
     
-    # Nếu không tìm thấy, liệt kê tất cả models khả dụng
+    # Liệt kê tất cả models khả dụng từ API
     try:
         print("🔍 Liệt kê tất cả models Gemini khả dụng...")
         models_list = list(genai.list_models())
+        
+        # Danh sách model theo thứ tự ưu tiên
+        preferred_models = [
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-3.5-flash"
+        ]
+        
+        # Tìm model phù hợp theo thứ tự ưu tiên
+        for pref in preferred_models:
+            for m in models_list:
+                if 'generateContent' in m.supported_generation_methods:
+                    model_id = m.name.replace('models/', '')
+                    if pref in model_id:
+                        _AVAILABLE_MODEL = model_id
+                        print(f"✅ Phát hiện model khả dụng (ưu tiên): {model_id}")
+                        return
+                    
+        # Nếu không có trong danh sách ưu tiên nhưng list thành công, lấy model đầu tiên hỗ trợ generateContent
         for m in models_list:
             if 'generateContent' in m.supported_generation_methods:
                 model_id = m.name.replace('models/', '')
@@ -50,20 +77,9 @@ def _detect_available_model():
     except Exception as e:
         print(f"⚠️ Lỗi khi list models: {str(e)}")
     
-    # Fallback: thử danh sách các model phổ biến
-    print("⚠️ Fallback: thử danh sách model...")
-    models_to_try = ["gemini-pro", "text-bison"]
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            _AVAILABLE_MODEL = model_name
-            print(f"✅ Phát hiện model khả dụng: {model_name}")
-            return
-        except:
-            continue
-    
-    print("❌ Không tìm thấy model Gemini nào khả dụng!")
-    _AVAILABLE_MODEL = None
+    # Fallback: sử dụng model mặc định hiện tại là gemini-2.5-flash
+    print("⚠️ Fallback: sử dụng gemini-2.5-flash...")
+    _AVAILABLE_MODEL = "gemini-2.5-flash"
 
 
 def get_available_model():
