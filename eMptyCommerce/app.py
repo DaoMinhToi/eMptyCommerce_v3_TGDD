@@ -29,7 +29,7 @@ from ui_components import (
 from ai_chat_widget import render_simple_floating_button
 from ai_utils import init_gemini_api
 from db_utils import add_to_cart, init_database, get_or_create_cart, merge_cart
-from cart_ui import render_cart_sidebar, render_shopping_cart_page
+from cart_ui import render_cart_sidebar, render_shopping_cart_page, render_purchase_history_page
 
 
 # ==================== CẤU HÌNH GEMINI API ====================
@@ -137,6 +137,9 @@ def handle_add_to_cart(product_id: int, title: str = ""):
 # Cache gợi ý Warm-Start để không mất sau khi bấm nút khác
 if 'warm_recommendations' not in st.session_state:
     st.session_state.warm_recommendations = None
+
+if 'selected_category' not in st.session_state:
+    st.session_state.selected_category = 'Tất cả'
 
 # Lưu trạng thái Gemini API vào session_state
 st.session_state.gemini_available = GEMINI_AVAILABLE
@@ -348,8 +351,11 @@ with st.sidebar:
         st.session_state.current_customer_id = None
         st.session_state.warm_recommendations = None
         st.session_state["selected_book_for_reviews"] = None
+        st.session_state.selected_category = "Tất cả"
         if "tab_category_select" in st.session_state:
             st.session_state["tab_category_select"] = "Tất cả"
+        if "tab_category_select_selectbox" in st.session_state:
+            st.session_state["tab_category_select_selectbox"] = "Tất cả"
     
     # Scenario selection - cleaner label
     st.markdown("**🎯 Chọn kịch bản**")
@@ -393,8 +399,11 @@ with st.sidebar:
                 # Reset các bộ lọc và gợi ý của người dùng cũ
                 st.session_state.warm_recommendations = None
                 st.session_state["selected_book_for_reviews"] = None
+                st.session_state.selected_category = "Tất cả"
                 if "tab_category_select" in st.session_state:
                     st.session_state["tab_category_select"] = "Tất cả"
+                if "tab_category_select_selectbox" in st.session_state:
+                    st.session_state["tab_category_select_selectbox"] = "Tất cả"
                 
                 if st.session_state.last_merged_customer_id != new_customer_id:
                     merge_cart(st.session_state.session_id, new_customer_id)
@@ -429,7 +438,8 @@ with st.sidebar:
 
     sync_query_params()
     
-    st.markdown("---")
+    # Hiển thị giỏ hàng thu gọn phía trên phần thống kê
+    render_cart_sidebar(st.session_state.cart_id)
     
     # Data statistics with cleaner layout
     st.caption("📊 Thống kê dữ liệu")
@@ -508,8 +518,7 @@ with st.sidebar:
         )
 
 
-# ==================== SIDEBAR CART (COMPACT) ====================
-render_cart_sidebar(st.session_state.cart_id)
+# (Đã chuyển phần Sidebar Cart lên phía trên phần Thống kê dữ liệu)
 
 
 # ==================== CART VIEW ====================
@@ -523,6 +532,13 @@ if st.session_state.view == "cart":
 if st.session_state.view == "checkout":
     from cart_ui import render_checkout_page
     render_checkout_page(st.session_state.cart_id, book_data)
+    render_footer()
+    st.stop()
+
+
+# ==================== PURCHASE HISTORY VIEW ====================
+if st.session_state.view == "orders":
+    render_purchase_history_page(st.session_state.current_customer_id, st.session_state.session_id, book_data)
     render_footer()
     st.stop()
 
@@ -1188,11 +1204,17 @@ else:
             all_categories = ['Tất cả']
         
         # Selectbox để chọn danh mục
+        default_cat_index = 0
+        if st.session_state.selected_category in all_categories:
+            default_cat_index = all_categories.index(st.session_state.selected_category)
+            
         selected_cat = st.selectbox(
             "Chọn danh mục:",
             options=all_categories,
-            key="tab_category_select"
+            index=default_cat_index,
+            key="tab_category_select_selectbox"
         )
+        st.session_state.selected_category = selected_cat
         
         if selected_cat != 'Tất cả':
             try:

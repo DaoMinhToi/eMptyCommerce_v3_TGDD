@@ -22,3 +22,5 @@ venv/
 ENV/
 *.db
 eMptyCommerce/__pycache__/
+.streamlit/secrets.toml
+eMptyCommerce/.streamlit/secrets.toml

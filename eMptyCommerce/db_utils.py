@@ -669,7 +669,7 @@ def is_order_exists(order_id: str) -> bool:
         return False
 
 
-def create_order(customer_id: Optional[int], session_id: Optional[str], total_amount: int, payment_method: str, payment_status: str, items: List[Dict]) -> Optional[str]:
+def create_order(customer_id: Optional[int], session_id: Optional[str], total_amount: int, payment_method: str, payment_status: str, items: List[Dict], order_id: Optional[str] = None) -> Optional[str]:
     """
     Tạo đơn hàng mới trong database và thêm các mặt hàng trong đơn hàng.
     
@@ -680,21 +680,25 @@ def create_order(customer_id: Optional[int], session_id: Optional[str], total_am
         payment_method: 'COD' hoặc 'BANK_TRANSFER'
         payment_status: 'Pending', 'Paid', 'Failed'
         items: Danh sách dict, mỗi dict chứa {'product_id': int, 'quantity': int, 'price': int}
+        order_id: Mã đơn hàng tùy chọn (nếu đã sinh sẵn ở UI)
         
     Returns:
         order_id: Mã đơn hàng được sinh ra, hoặc None nếu thất bại
     """
     try:
-        # Sinh mã đơn hàng duy nhất
-        order_id = None
-        for _ in range(10):
-            temp_id = generate_order_id()
-            if not is_order_exists(temp_id):
-                order_id = temp_id
-                break
-        
-        if order_id is None:
-            raise ValueError("Không thể tạo mã đơn hàng duy nhất.")
+        if order_id is not None:
+            if is_order_exists(order_id):
+                return order_id
+        else:
+            # Sinh mã đơn hàng duy nhất
+            for _ in range(10):
+                temp_id = generate_order_id()
+                if not is_order_exists(temp_id):
+                    order_id = temp_id
+                    break
+            
+            if order_id is None:
+                raise ValueError("Không thể tạo mã đơn hàng duy nhất.")
             
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -785,8 +789,12 @@ def verify_sepay_transaction(order_id: str, expected_amount: int) -> bool:
             
         for tx in transactions:
             content = tx.get("transaction_content", "") or tx.get("content", "") or ""
+            # Làm sạch chuỗi để so sánh (loại bỏ ký tự đặc biệt như dấu gạch dưới, khoảng trắng do ngân hàng lọc bỏ)
+            clean_order_id = "".join(c for c in order_id if c.isalnum()).lower()
+            clean_content = "".join(c for c in content if c.isalnum()).lower()
+            
             # Kiểm tra xem mã đơn hàng có xuất hiện trong nội dung chuyển khoản không
-            if order_id.lower() in content.lower():
+            if clean_order_id in clean_content:
                 # Tìm số tiền giao dịch
                 tx_amount = 0
                 for field in ["amount", "amount_in", "amountIn"]:
@@ -807,4 +815,85 @@ def verify_sepay_transaction(order_id: str, expected_amount: int) -> bool:
     except Exception as e:
         print(f"❌ Lỗi kiểm tra giao dịch SePay: {e}")
         return False
+
+
+def get_customer_orders(customer_id: Optional[int] = None, session_id: Optional[str] = None) -> List[Dict]:
+    """
+    Truy xuất lịch sử mua hàng của một khách hàng (hoặc theo session_id).
+    Kết quả trả về danh sách các đơn hàng, mỗi đơn hàng chứa thông tin chi tiết các sản phẩm đã mua.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            if customer_id is not None:
+                cursor.execute('''
+                    SELECT order_id, total_amount, payment_method, payment_status, created_at
+                    FROM Orders
+                    WHERE customer_id = ?
+                    ORDER BY created_at DESC
+                ''', (customer_id,))
+            elif session_id is not None:
+                cursor.execute('''
+                    SELECT order_id, total_amount, payment_method, payment_status, created_at
+                    FROM Orders
+                    WHERE session_id = ?
+                    ORDER BY created_at DESC
+                ''', (session_id,))
+            else:
+                return []
+                
+            orders = cursor.fetchall()
+            
+            result = []
+            
+            # Load book data to get title, category, cover_link
+            book_data_path = os.path.join(APP_DIR, 'data', 'book_data.csv')
+            book_df = pd.DataFrame()
+            if os.path.exists(book_data_path):
+                book_df = pd.read_csv(book_data_path)
+                book_df = book_df.drop_duplicates(subset=['product_id'], keep='first')
+            else:
+                clean_path = os.path.join(APP_DIR, 'data', 'clean_book_data.csv')
+                if os.path.exists(clean_path):
+                    book_df = pd.read_csv(clean_path)
+                    book_df = book_df.drop_duplicates(subset=['product_id'], keep='first')
+            
+            for order in orders:
+                order_dict = dict(order)
+                
+                # Lấy chi tiết sản phẩm cho từng đơn hàng
+                cursor.execute('''
+                    SELECT oi.product_id, oi.quantity, oi.price
+                    FROM Order_Items oi
+                    WHERE oi.order_id = ?
+                ''', (order_dict['order_id'],))
+                
+                items = cursor.fetchall()
+                items_list = []
+                
+                for item in items:
+                    item_dict = dict(item)
+                    # Gán title, category mặc định
+                    item_dict['title'] = f"Sản phẩm #{item_dict['product_id']}"
+                    item_dict['category'] = "Khác"
+                    item_dict['cover_link'] = ""
+                    
+                    if not book_df.empty:
+                        matched = book_df[book_df['product_id'] == item_dict['product_id']]
+                        if not matched.empty:
+                            row = matched.iloc[0]
+                            item_dict['title'] = str(row.get('title', item_dict['title']))
+                            item_dict['category'] = str(row.get('category', item_dict['category']))
+                            item_dict['cover_link'] = str(row.get('cover_link', ''))
+                            
+                    items_list.append(item_dict)
+                    
+                order_dict['items'] = items_list
+                result.append(order_dict)
+                
+            return result
+    except Exception as e:
+        print(f"❌ Lỗi truy xuất lịch sử mua hàng: {e}")
+        return []
+
 

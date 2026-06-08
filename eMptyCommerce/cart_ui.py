@@ -3,6 +3,7 @@ Module để render Shopping Cart trên giao diện Streamlit
 Cung cấp các hàm để hiển thị giỏ hàng, thêm/xóa sản phẩm, v.v.
 """
 
+from typing import Optional
 import streamlit as st
 import pandas as pd
 from db_utils import (
@@ -10,7 +11,7 @@ from db_utils import (
     update_quantity, clear_cart, get_cart_summary,
     create_order, update_order_payment_status,
     generate_vietqr, verify_sepay_transaction,
-    generate_order_id
+    generate_order_id, get_customer_orders
 )
 
 
@@ -66,7 +67,7 @@ def render_cart_items_table(cart_id: int) -> pd.DataFrame:
 
 def render_cart_items_expandable(cart_id: int):
     """
-    Render sản phẩm trong giỏ hàng dạng expandable (mở rộng).
+    Render sản phẩm trong giỏ hàng dạng expandable (mở rộng) với hộp chọn thanh toán riêng.
     Cho phép quản lý từng sản phẩm.
     
     Args:
@@ -77,39 +78,103 @@ def render_cart_items_expandable(cart_id: int):
     if items_df.empty:
         st.info("📭 Giỏ hàng của bạn còn trống.")
         return
-    
+        
+    # Khởi tạo trạng thái chọn sản phẩm
+    if "selected_cart_items" not in st.session_state:
+        st.session_state.selected_cart_items = {}
+        
+    for _, row in items_df.iterrows():
+        pid = int(row['product_id'])
+        if pid not in st.session_state.selected_cart_items:
+            st.session_state.selected_cart_items[pid] = True
+            
+    # Định nghĩa callback khi bấm "Chọn tất cả"
+    def toggle_all_items():
+        val = st.session_state.select_all_cart_items
+        for _, r in items_df.iterrows():
+            p_id = int(r['product_id'])
+            st.session_state.selected_cart_items[p_id] = val
+            st.session_state[f"select_{p_id}"] = val
+
+    # Định nghĩa callback khi chọn từng sản phẩm
+    def on_item_change(p_id: int):
+        st.session_state.selected_cart_items[p_id] = st.session_state[f"select_{p_id}"]
+            
+    # Checkbox chọn tất cả
+    col_all_select, col_all_label = st.columns([1, 15])
+    with col_all_select:
+        all_selected = all(st.session_state.selected_cart_items.get(int(row['product_id']), True) for _, row in items_df.iterrows())
+        st.session_state.select_all_cart_items = all_selected
+        st.checkbox(
+            "Chọn tất cả",
+            key="select_all_cart_items",
+            on_change=toggle_all_items,
+            label_visibility="collapsed"
+        )
+    with col_all_label:
+        st.markdown("**Chọn tất cả để thanh toán**")
+        
     st.write("### Chi tiết sản phẩm")
     
     for idx, item in items_df.iterrows():
-        with st.expander(f"📖 {item['title']} (x{item['quantity']})"):
-            col1, col2, col3 = st.columns([2, 1, 1])
+        pid = int(item['product_id'])
+        col_select, col_exp = st.columns([1, 15])
+        
+        with col_select:
+            st.write("") # Spacer để căn giữa checkbox theo chiều dọc
+            st.write("")
             
-            with col1:
-                st.write(f"**ID:** {item['product_id']}")
-                st.write(f"**Thể loại:** {item['category']}")
-                st.write(f"**Thêm lúc:** {item['added_at']}")
-            
-            with col2:
-                st.write(f"**Số lượng:** {item['quantity']}")
-            
-            with col3:
-                # Nút cập nhật số lượng
-                new_qty = st.number_input(
-                    f"Cập nhật số lượng",
-                    min_value=0,
-                    value=item['quantity'],
-                    key=f"qty_{item['cart_item_id']}_{idx}"
-                )
+            # Khởi tạo giá trị trong session state nếu chưa có để đồng nhất với checkbox
+            if f"select_{pid}" not in st.session_state:
+                st.session_state[f"select_{pid}"] = st.session_state.selected_cart_items.get(pid, True)
                 
-                if new_qty != item['quantity']:
-                    update_quantity(item['cart_item_id'], new_qty)
-                    st.rerun()
+            st.checkbox(
+                "Chọn",
+                key=f"select_{pid}",
+                on_change=on_item_change,
+                args=(pid,),
+                label_visibility="collapsed"
+            )
             
-            # Nút xóa sản phẩm
-            if st.button(f"❌ Xóa khỏi giỏ", key=f"remove_{item['cart_item_id']}_{idx}"):
-                remove_from_cart(item['cart_item_id'])
-                st.success(f"Đã xóa {item['title']} khỏi giỏ!")
-                st.rerun()
+        with col_exp:
+            price = int(item.get('current_price', 50000))
+            qty = int(item['quantity'])
+            with st.expander(f"📖 {item['title']}"):
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.write(f"**ID:** {item['product_id']}")
+                    st.write(f"**Thể loại:** {item['category']}")
+                    st.write(f"**Đơn giá:** {price:,}đ")
+                    st.write(f"**Thêm lúc:** {item['added_at']}")
+                
+                with col2:
+                    st.write(f"**Số lượng:** {qty}")
+                    st.write(f"**Thành tiền:** {price * qty:,}đ")
+                
+                with col3:
+                    # Nút cập nhật số lượng
+                    new_qty = st.number_input(
+                        f"Cập nhật số lượng",
+                        min_value=0,
+                        value=item['quantity'],
+                        key=f"qty_{item['cart_item_id']}_{idx}"
+                    )
+                    
+                    if new_qty != item['quantity']:
+                        update_quantity(item['cart_item_id'], new_qty)
+                        st.rerun()
+                
+                # Nút xóa sản phẩm
+                if st.button(f"❌ Xóa khỏi giỏ", key=f"remove_{item['cart_item_id']}_{idx}"):
+                    remove_from_cart(item['cart_item_id'])
+                    # Dọn dẹp session state khi xóa sản phẩm
+                    if pid in st.session_state.selected_cart_items:
+                        del st.session_state.selected_cart_items[pid]
+                    if f"select_{pid}" in st.session_state:
+                        del st.session_state[f"select_{pid}"]
+                    st.success(f"Đã xóa {item['title']} khỏi giỏ!")
+                    st.rerun()
 
 
 def render_cart_actions(cart_id: int):
@@ -135,13 +200,25 @@ def render_cart_actions(cart_id: int):
                 st.warning("⚠️ Nhấn lại để xác nhận xóa tất cả")
     
     with col2:
-        if st.button("💳 Thanh toán", use_container_width=True):
+        # Kiểm tra xem có ít nhất một sản phẩm được chọn hay không
+        selected_pids = [pid for pid, val in st.session_state.get("selected_cart_items", {}).items() if val]
+        items_df = get_cart_items(cart_id)
+        selected_items_in_cart = items_df[items_df['product_id'].isin(selected_pids)] if not items_df.empty else pd.DataFrame()
+        checkout_disabled = selected_items_in_cart.empty
+        
+        if st.button("💳 Thanh toán", use_container_width=True, disabled=checkout_disabled, help="Vui lòng chọn ít nhất một sản phẩm để thanh toán" if checkout_disabled else None):
             st.session_state.view = "checkout"
             # Reset trạng thái order của phiên checkout mới
             if 'checkout_order_id' in st.session_state:
                 del st.session_state.checkout_order_id
             if 'checkout_order_created' in st.session_state:
                 del st.session_state.checkout_order_created
+            if 'checkout_success_order_id' in st.session_state:
+                del st.session_state.checkout_success_order_id
+            if 'checkout_success_amount' in st.session_state:
+                del st.session_state.checkout_success_amount
+            if 'checkout_success_method' in st.session_state:
+                del st.session_state.checkout_success_method
             st.rerun()
     
     with col3:
@@ -174,15 +251,25 @@ def render_shopping_cart_page(cart_id: int, book_data: pd.DataFrame):
         
         st.divider()
         
-        # Hiển thị tóm tắt giỏ hàng
-        summary = get_cart_summary(cart_id)
+        # Lọc danh sách sản phẩm được chọn để hiển thị thông số tổng tiền
+        selected_pids = [pid for pid, val in st.session_state.get("selected_cart_items", {}).items() if val]
+        selected_items = items_df[items_df['product_id'].isin(selected_pids)]
+        
+        selected_total_items = len(selected_items)
+        selected_total_qty = int(selected_items['quantity'].sum()) if not selected_items.empty else 0
+        
+        if not selected_items.empty and 'current_price' not in selected_items.columns:
+            selected_items['current_price'] = 50000
+        selected_total_price = int((selected_items['current_price'] * selected_items['quantity']).sum()) if not selected_items.empty else 0
+        
+        # Hiển thị tóm tắt giỏ hàng (chỉ tính các sản phẩm được chọn để thanh toán)
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Số loại sản phẩm", summary['total_items'])
+            st.metric("Sản phẩm đã chọn", f"{selected_total_items} / {len(items_df)}")
         with col2:
-            st.metric("Tổng số lượng", summary['total_quantity'])
+            st.metric("Tổng số lượng", selected_total_qty)
         with col3:
-            st.metric("Trạng thái", "Sẵn sàng thanh toán ✓")
+            st.metric("Tổng tiền thanh toán", f"{selected_total_price:,}đ")
     else:
         st.info("📭 Giỏ hàng của bạn còn trống")
         st.write("Hãy thêm sách từ danh sách sản phẩm!")
@@ -214,6 +301,8 @@ def render_cart_sidebar(cart_id: int):
         
         if st.button("📋 Xem chi tiết", use_container_width=True):
             st.session_state.view = "cart"
+        if st.button("📜 Lịch sử mua hàng", use_container_width=True):
+            st.session_state.view = "orders"
         
         st.markdown("---")
 
@@ -278,12 +367,15 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
             st.rerun()
         return
 
-    # 2. Lấy giỏ hàng hiện tại
-    items_df = get_cart_items(cart_id)
+    # 2. Lấy giỏ hàng hiện tại và lọc theo sản phẩm được chọn
+    all_items_df = get_cart_items(cart_id)
+    selected_pids = [pid for pid, val in st.session_state.get("selected_cart_items", {}).items() if val]
+    items_df = all_items_df[all_items_df['product_id'].isin(selected_pids)] if not all_items_df.empty else pd.DataFrame()
+    
     if items_df.empty:
-        st.warning("⚠️ Giỏ hàng trống! Không thể thực hiện thanh toán.")
-        if st.button("🏠 Quay về trang mua sắm"):
-            st.session_state.view = "shopping"
+        st.warning("⚠️ Chưa chọn sản phẩm nào để thanh toán! Vui lòng quay lại giỏ hàng.")
+        if st.button("🛒 Quay lại giỏ hàng"):
+            st.session_state.view = "cart"
             st.rerun()
         return
 
@@ -384,7 +476,15 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                     )
                     
                     if order_id:
-                        clear_cart(cart_id)
+                        # Chỉ xóa các sản phẩm được chọn thanh toán khỏi giỏ hàng
+                        for _, row in items_df.iterrows():
+                            remove_from_cart(int(row['cart_item_id']))
+                        # Dọn dẹp trạng thái chọn trong session state
+                        selected_cart_items = st.session_state.get("selected_cart_items", {})
+                        for _, row in items_df.iterrows():
+                            pid = int(row['product_id'])
+                            if pid in selected_cart_items:
+                                del selected_cart_items[pid]
                         st.session_state.checkout_success_order_id = order_id
                         st.session_state.checkout_success_amount = total_amount
                         st.session_state.checkout_success_method = 'COD'
@@ -419,7 +519,8 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                     total_amount=total_amount,
                     payment_method='BANK_TRANSFER',
                     payment_status='Pending',
-                    items=items_list
+                    items=items_list,
+                    order_id=order_id
                 )
                 if success_id:
                     st.session_state.checkout_order_created = True
@@ -469,15 +570,148 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
             </div>
             """, unsafe_allow_html=True)
             
+            # Tự động quét và kiểm tra giao dịch mỗi 6 giây qua Streamlit Fragment
+            @st.fragment(run_every=6)
+            def auto_check_payment():
+                is_paid = verify_sepay_transaction(order_id, total_amount)
+                if is_paid:
+                    update_order_payment_status(order_id, 'Paid')
+                    # Chỉ xóa các sản phẩm được chọn thanh toán khỏi giỏ hàng
+                    for _, row in items_df.iterrows():
+                        remove_from_cart(int(row['cart_item_id']))
+                    # Dọn dẹp trạng thái chọn trong session state
+                    selected_cart_items = st.session_state.get("selected_cart_items", {})
+                    for _, row in items_df.iterrows():
+                        pid = int(row['product_id'])
+                        if pid in selected_cart_items:
+                            del selected_cart_items[pid]
+                    st.session_state.checkout_success_order_id = order_id
+                    st.session_state.checkout_success_amount = total_amount
+                    st.session_state.checkout_success_method = 'BANK_TRANSFER'
+                    st.rerun()
+                else:
+                    st.markdown("""
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 8px; color: #004085; font-size: 14px; margin-top: 10px; margin-bottom: 15px; padding: 10px; background-color: #e8f4fd; border-radius: 6px; border: 1px solid #b8daff;">
+                        <div style="width: 16px; height: 16px; border: 2px solid #004085; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <span>⏳ Hệ thống đang tự động kiểm tra giao dịch qua SePay API... (mỗi 6s)</span>
+                    </div>
+                    <style>
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
+            auto_check_payment()
+            
             if st.button("💳 Tôi đã chuyển khoản", type="primary", use_container_width=True):
                 with st.spinner("⏳ Đang kiểm tra giao dịch qua SePay API..."):
                     is_paid = verify_sepay_transaction(order_id, total_amount)
                     if is_paid:
                         update_order_payment_status(order_id, 'Paid')
-                        clear_cart(cart_id)
+                        # Chỉ xóa các sản phẩm được chọn thanh toán khỏi giỏ hàng
+                        for _, row in items_df.iterrows():
+                            remove_from_cart(int(row['cart_item_id']))
+                        # Dọn dẹp trạng thái chọn trong session state
+                        selected_cart_items = st.session_state.get("selected_cart_items", {})
+                        for _, row in items_df.iterrows():
+                            pid = int(row['product_id'])
+                            if pid in selected_cart_items:
+                                del selected_cart_items[pid]
                         st.session_state.checkout_success_order_id = order_id
                         st.session_state.checkout_success_amount = total_amount
                         st.session_state.checkout_success_method = 'BANK_TRANSFER'
                         st.rerun()
                     else:
                         st.error("❌ Chưa tìm thấy giao dịch! Vui lòng đợi từ 1-2 phút rồi nhấn lại. Đảm bảo bạn chuyển đúng số tiền và nội dung chuyển khoản.")
+
+
+def render_purchase_history_page(customer_id: Optional[int], session_id: Optional[str], book_data: pd.DataFrame):
+    """
+    Render trang lịch sử mua hàng (Purchase History) cho người dùng.
+    """
+    st.title("📜 Lịch sử mua hàng")
+    
+    col_back, _ = st.columns([1, 4])
+    with col_back:
+        if st.button("⬅️ Quay lại mua sắm", use_container_width=True):
+            st.session_state.view = "shopping"
+            st.rerun()
+            
+    st.markdown("Xem lại danh sách các đơn hàng đã đặt và trạng thái thanh toán.")
+    st.divider()
+    
+    # Lấy lịch sử đơn hàng
+    orders = get_customer_orders(customer_id=customer_id, session_id=session_id)
+    
+    if not orders:
+        st.info("📭 Bạn chưa có đơn hàng nào trong lịch sử.")
+        if st.button("🛍️ Mua sắm ngay", type="primary"):
+            st.session_state.view = "shopping"
+            st.rerun()
+        return
+        
+    for order in orders:
+        order_id = order['order_id']
+        total_amount = order['total_amount']
+        method = order['payment_method']
+        status = order['payment_status']
+        created_at = order['created_at']
+        items = order['items']
+        
+        # Tạo badge trạng thái thanh toán
+        if status == 'Paid':
+            status_badge = '<span style="background-color: #d4edda; color: #155724; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold;">Đã thanh toán (Paid)</span>'
+        elif status == 'Pending':
+            if method == 'COD':
+                status_badge = '<span style="background-color: #ffeeba; color: #856404; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold;">Chờ giao hàng (COD)</span>'
+            else:
+                status_badge = '<span style="background-color: #f8d7da; color: #721c24; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold;">Chờ thanh toán (Pending)</span>'
+        else:
+            status_badge = f'<span style="background-color: #dee2e6; color: #495057; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: bold;">{status}</span>'
+            
+        method_text = "Thanh toán khi nhận hàng (COD)" if method == 'COD' else "Chuyển khoản VietQR (SePay)"
+        
+        # Định dạng tiêu đề cho Expander
+        expander_title = f"📦 Đơn hàng {order_id} — {total_amount:,}đ ({'Thành công' if status == 'Paid' or method == 'COD' else 'Chờ xử lý'})"
+        
+        with st.expander(expander_title):
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #e9ecef; font-size: 14px;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 4px 0; color: #666;">Mã đơn hàng:</td>
+                        <td style="padding: 4px 0; font-weight: bold; text-align: right; color: #007bff;">{order_id}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px 0; color: #666;">Ngày đặt hàng:</td>
+                        <td style="padding: 4px 0; text-align: right; font-weight: bold;">{created_at}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px 0; color: #666;">Hình thức thanh toán:</td>
+                        <td style="padding: 4px 0; text-align: right; font-weight: bold;">{method_text}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px 0; color: #666;">Trạng thái thanh toán:</td>
+                        <td style="padding: 4px 0; text-align: right;">{status_badge}</td>
+                    </tr>
+                </table>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.write("**Chi tiết sản phẩm đã mua:**")
+            
+            for item in items:
+                col_cover, col_desc = st.columns([1, 6])
+                with col_cover:
+                    if item.get('cover_link') and pd.notna(item['cover_link']) and item['cover_link'] != '':
+                        st.image(item['cover_link'], use_container_width=True)
+                    else:
+                        st.image("https://picsum.photos/100/150?random=1", use_container_width=True)
+                with col_desc:
+                    st.markdown(f"##### {item['title']}")
+                    st.write(f"📂 Thể loại: {item['category']}")
+                    st.write(f"💵 Đơn giá: {item['price']:,}đ x {item['quantity']}")
+                    st.write(f"💰 Thành tiền: {item['price'] * item['quantity']:,}đ")
+                st.divider()
