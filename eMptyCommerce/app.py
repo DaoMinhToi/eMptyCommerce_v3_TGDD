@@ -1170,8 +1170,8 @@ else:
         "**Mô hình Hybrid:** 60% SVD + 40% Content-Based"
     )
     
-    # Tạo TABS cho 4 chức năng chính
-    tab1, tab2, tab3, tab4 = st.tabs(["🛍️ Danh mục sách", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá", "💬 Đánh giá sách"])
+    # Tạo TABS cho các chức năng chính
+    tab1, tab2, tab3 = st.tabs(["🛍️ Danh mục sách", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá"])
     
     # ============ TAB 1: DANH MỤC SÁCH ============
     with tab1:
@@ -1266,34 +1266,7 @@ else:
         st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sách đã đánh giá")
         st.dataframe(customer_reviews_display, use_container_width=True, hide_index=True)
 
-    # ============ TAB 4: ĐÁNH GIÁ SÁCH ============
-    with tab4:
-        st.subheader("💬 Đánh giá & bình luận của sách")
-        
-        selected_review_book_id = st.selectbox(
-            "Chọn quyển sách để xem đánh giá:",
-            options=book_data['product_id'].tolist(),
-            format_func=lambda x: book_dict.get(x, f"Sách {x}"),
-            key="warm_review_book_select"
-        )
-        
-        sel_book = book_data[book_data['product_id'] == selected_review_book_id].iloc[0]
-        
-        col_img, col_info = st.columns([1, 4])
-        with col_img:
-            if pd.notna(sel_book['cover_link']) and sel_book['cover_link'] != '':
-                st.image(sel_book['cover_link'], use_container_width=True)
-            else:
-                st.image("https://picsum.photos/200/300?random=2", use_container_width=True)
-        with col_info:
-            st.markdown(f"#### {sel_book['title']}")
-            st.markdown(f"📂 **Thể loại:** {sel_book['category']}")
-            
-        st.markdown("---")
-        
-        from ui_components import show_book_reviews
-        book_reviews = get_book_reviews_data(selected_review_book_id)
-        show_book_reviews(selected_review_book_id, book_reviews)
+
 
 
 
