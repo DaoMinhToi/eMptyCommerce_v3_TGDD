@@ -176,16 +176,17 @@ def render_floating_chat_widget():
     col_spacer, col_chat = st.columns([10, 1])
     
     with col_chat:
-        if st.button("💬", key="chat_button", help="Mở Trợ lý AI tư vấn sách"):
-            st.session_state.show_chat = True
+        if st.button("💬", key="chat_button", help="Mở Trợ lý AI tư vấn sản phẩm"):
+            st.session_state.chat_expanded = True
+            st.rerun()
     
     # Nếu user bấm button, hiển thị chat modal
-    if st.session_state.get("show_chat", False):
+    if st.session_state.get("chat_expanded", False):
         with st.container():
             st.markdown('<div class="chat-widget-container">', unsafe_allow_html=True)
             
             # Header
-            st.markdown('<div class="chat-header">🤖 eMpTy AI - Tư vấn Sách</div>', unsafe_allow_html=True)
+            st.markdown('<div class="chat-header">🤖 eMpTy AI - Tư vấn Sản phẩm</div>', unsafe_allow_html=True)
             
             # Chat messages area
             with st.container():
@@ -214,7 +215,7 @@ def render_floating_chat_widget():
                         "Nhập tin nhắn...",
                         key="chat_input",
                         label_visibility="collapsed",
-                        placeholder="Hỏi về sách..."
+                        placeholder="Hỏi về sản phẩm..."
                     )
                 
                 with col_btn:
@@ -255,7 +256,7 @@ def render_floating_chat_widget():
             # Close button
             st.markdown('<div style="text-align: center; margin-top: 8px;">', unsafe_allow_html=True)
             if st.button("Đóng", key="close_chat_btn"):
-                st.session_state.show_chat = False
+                st.session_state.chat_expanded = False
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             
@@ -281,7 +282,7 @@ def display_ai_message_with_images(ai_response):
     
     # Lấy hình ảnh cho mỗi sách
     if book_titles:
-        st.markdown("#### 📚 Sách được đề cập:")
+        st.markdown("#### 📱 Sản phẩm được đề cập:")
         
         # Tạo grid hiển thị sách
         cols = st.columns(2)
@@ -333,8 +334,8 @@ def render_simple_floating_button():
     
     # Sử dụng popover (Streamlit 1.16+)
     try:
-        with st.popover("💬", help="Trợ lý AI tư vấn sách"):
-            st.markdown("### 🤖 eMpTy AI - Tư vấn Sách")
+        with st.popover("💬", help="Trợ lý AI tư vấn sản phẩm"):
+            st.markdown("### 🤖 eMpTy AI - Tư vấn Sản phẩm")
             st.divider()
             
             # 1. Tạo placeholder cho chat messages ở phía trên form
@@ -349,7 +350,7 @@ def render_simple_floating_button():
                 with col_input:
                     user_message = st.text_input(
                         "Nhập câu hỏi...",
-                        placeholder="Hỏi về sách, tác giả...",
+                        placeholder="Hỏi về sản phẩm...",
                         label_visibility="collapsed",
                         key="user_message_input"
                     )

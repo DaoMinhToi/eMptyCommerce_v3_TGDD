@@ -16,7 +16,7 @@ def render_search_bar(session_state):
         header_input = st.text_input(
             "search",
             value=session_state.get('search_query', ''),
-            placeholder="🔍  Nhập tên sách để tìm nội dung tương tự...",
+            placeholder="🔍  Nhập tên sản phẩm để tìm nội dung tương tự...",
             key="header_input_box",
             label_visibility="collapsed"
         )
@@ -55,7 +55,7 @@ def render_category_books_grid(books_df: pd.DataFrame, DATA_DIR: str,
     """
     from db_utils import add_to_cart
 
-    st.caption(f"📊 Tìm thấy {len(books_df)} sách · Hiển thị top 10")
+    st.caption(f"📊 Tìm thấy {len(books_df)} sản phẩm · Hiển thị top 10")
     
     if not books_df.empty:
         for row_start in range(0, len(books_df), cols_per_row):
@@ -151,7 +151,7 @@ def render_cosine_search_results_grid(similar_books_df: pd.DataFrame,
     """
     from db_utils import add_to_cart
     
-    st.markdown("##### 📚 5 sách có nội dung tương tự nhất:")
+    st.markdown("##### 📱 5 sản phẩm có nội dung tương tự nhất:")
     cols = st.columns(cols_per_row)
     
     for i, (_, book) in enumerate(similar_books_df.iterrows()):
@@ -194,11 +194,11 @@ def render_customer_info_metrics(rated_books_count: int, avg_rating: float):
     """
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("📚 Đã đánh giá", rated_books_count)
+        st.metric("📦 Đã đánh giá", rated_books_count)
     with col2:
         st.metric("⭐ Trung bình", f"{avg_rating:.2f}")
     with col3:
-        st.metric("🎯 Sở thích", "Sách yêu thích" if avg_rating >= 4 else "Đa dạng")
+        st.metric("🎯 Sở thích", "Sản phẩm yêu thích" if avg_rating >= 4 else "Đa dạng")
     
     st.markdown("---")
 
@@ -224,7 +224,7 @@ def render_search_result_container(final_query: str, book_df: pd.DataFrame,
     if error:
         st.warning(f"⚠️ {error}")
     else:
-        st.success(f"✅ Tìm thấy sách: **{source_book['title']}**")
+        st.success(f"✅ Tìm thấy sản phẩm: **{source_book['title']}**")
         st.markdown(f"📂 Danh mục: *{source_book.get('category','N/A')}*")
         
         render_cosine_search_results_grid(similar_books, cols_per_row=5)
@@ -330,7 +330,7 @@ def show_book_reviews(book_id: int, reviews: list[dict]):
     st.markdown(f"### 💬 Bình luận từ khách hàng ({total})")
 
     if total == 0:
-        st.info("📚 Quyển sách này chưa có bình luận nào từ khách hàng.")
+        st.info("📱 Sản phẩm này chưa có bình luận nào từ khách hàng.")
         return
 
     # Khởi tạo st.session_state cho phân trang bình luận

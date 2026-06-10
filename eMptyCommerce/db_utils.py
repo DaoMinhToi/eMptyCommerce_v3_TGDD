@@ -947,9 +947,9 @@ def get_all_user_interactions() -> pd.DataFrame:
                 return pd.DataFrame(columns=['customer_id', 'product_id', 'rating', 'interaction_type'])
             
             df = pd.DataFrame([dict(row) for row in rows])
-            # Ép kiểu dữ liệu
-            df['customer_id'] = df['customer_id'].astype(int)
-            df['product_id'] = df['product_id'].astype(int)
+            # Ép kiểu dữ liệu an toàn: chuyển chuỗi số thành int, giữ nguyên nếu có chữ cái (u_xxxx)
+            df['customer_id'] = df['customer_id'].apply(lambda x: int(x) if str(x).isdigit() else str(x))
+            df['product_id'] = df['product_id'].apply(lambda x: int(x) if str(x).isdigit() else str(x))
             df['rating'] = df['rating'].astype(float)
             return df
     except Exception as e:

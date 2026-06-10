@@ -24,7 +24,7 @@ def render_header(n_books: int = 1657, n_customers: int = 77660):
     """Render header bar cố định ở đầu trang
     
     Args:
-        n_books: Số lượng sách trong database
+        n_books: Số lượng sản phẩm trong database
         n_customers: Số lượng khách hàng trong database
     """
     # Format số liệu theo kiểu Việt Nam (1.657 thay vì 1,657)
@@ -51,7 +51,7 @@ def render_header(n_books: int = 1657, n_customers: int = 77660):
                 eMpTyCommerce
             </div>
             <div style="color:rgba(255,255,255,0.5);font-size:10px;">
-                Hệ thống gợi ý sách thông minh
+                Hệ thống gợi ý sản phẩm thông minh
             </div>
         </div>
     </div>
@@ -67,7 +67,7 @@ def render_header(n_books: int = 1657, n_customers: int = 77660):
     <div style="display:flex;gap:16px;flex-shrink:0;">
         <div style="text-align:center;">
             <div style="color:white;font-size:14px;font-weight:700;">{books_display}</div>
-            <div style="color:rgba(255,255,255,0.5);font-size:10px;">Đầu sách</div>
+            <div style="color:rgba(255,255,255,0.5);font-size:10px;">Sản phẩm</div>
         </div>
         <div style="text-align:center;">
             <div style="color:white;font-size:14px;font-weight:700;">{customers_display}</div>
@@ -81,10 +81,10 @@ def render_header(n_books: int = 1657, n_customers: int = 77660):
 def render_book_card(title: str, category: str, rating: float, n_reviews: int, 
                      price: int, cover_link: str, score=None, score_label=""):
     """
-    Render một card sách đẹp
+    Render một card sản phẩm đẹp
     
     Args:
-        title: Tên sách
+        title: Tên sản phẩm
         category: Danh mục
         rating: Điểm rating
         n_reviews: Số lượt đánh giá
@@ -100,7 +100,7 @@ def render_book_card(title: str, category: str, rating: float, n_reviews: int,
     if pd.notna(cover_link) and str(cover_link).startswith('http'):
         img_html = f'<img src="{cover_link}" style="width:100%;height:200px;object-fit:cover;border-radius:8px 8px 0 0;">'
     else:
-        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
+        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📱</div>'
     
     return f"""
     <div style="border:1px solid #e0e0e0;border-radius:12px;
@@ -132,10 +132,10 @@ def render_book_card(title: str, category: str, rating: float, n_reviews: int,
 def render_book_card_hybrid(title: str, category: str, cover_link: str, 
                            score: float, score_label="Điểm Hybrid"):
     """
-    Render book card cho Hybrid recommendations
+    Render product card cho Hybrid recommendations
     
     Args:
-        title: Tên sách
+        title: Tên sản phẩm
         category: Danh mục
         cover_link: Link ảnh bìa
         score: Điểm hybrid/similarity
@@ -148,7 +148,7 @@ def render_book_card_hybrid(title: str, category: str, cover_link: str,
     if pd.notna(cover_link) and str(cover_link).startswith('http'):
         img_html = f'<img src="{cover_link}" style="width:100%;height:180px;object-fit:cover;border-radius:8px;">'
     else:
-        img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
+        img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:36px;">📱</div>'
     
     try:
         score_f = float(score)

@@ -119,20 +119,21 @@ def search_context_books(query_text, top_n=6):
             df_full = pd.read_csv(full_path).drop_duplicates(subset=['product_id'])
             df = pd.merge(
                 df_clean[['product_id', 'title', 'category', 'cover_link', 'tokenized_desc']],
-                df_full[['product_id', 'authors', 'current_price', 'avg_rating']],
+                df_full[['product_id', 'current_price', 'avg_rating']],
                 on='product_id',
                 how='left'
             )
+            df['authors'] = "Thế Giới Di Động"
         else:
             df = df_clean.copy()
-            df['authors'] = "Nhiều tác giả"
-            df['current_price'] = 50000
+            df['authors'] = "Thế Giới Di Động"
+            df['current_price'] = 5000000
             df['avg_rating'] = 4.5
     except Exception as e:
-        print(f"⚠️ Lỗi load/merge book data trong search_context_books: {e}")
+        print(f"⚠️ Lỗi load/merge product data trong search_context_books: {e}")
         df = df_clean.copy()
-        df['authors'] = "Nhiều tác giả"
-        df['current_price'] = 50000
+        df['authors'] = "Thế Giới Di Động"
+        df['current_price'] = 5000000
         df['avg_rating'] = 4.5
 
     query_lower = query_text.lower().strip()
@@ -160,9 +161,10 @@ def search_context_books(query_text, top_n=6):
     # 5. Khớp các từ khóa đơn lẻ (bỏ qua stopwords tiếng Việt thông dụng)
     keywords = [w.strip() for w in query_lower.split() if len(w.strip()) > 2]
     vietnamese_stopwords = {
-        'sách', 'cuốn', 'những', 'của', 'một', 'tập', 'truyện', 'cho', 'này', 'tìm', 
-        'bán', 'chạy', 'hay', 'gợi', 'ý', 'tư', 'vấn', 'nào', 'đọc', 'muốn', 'thích',
-        'giới', 'thiệu', 'bạn', 'mình', 'có', 'không', 'về', 'lịch', 'sử'
+        'sản', 'phẩm', 'thiết', 'bị', 'máy', 'điện', 'thoại', 'laptop', 'tai', 'nghe',
+        'đồng', 'hồ', 'cửa', 'hàng', 'những', 'của', 'một', 'cho', 'này', 'tìm', 
+        'bán', 'chạy', 'hay', 'gợi', 'ý', 'tư', 'vấn', 'nào', 'muốn', 'thích',
+        'giới', 'thiệu', 'bạn', 'mình', 'có', 'không', 'về'
     }
     for kw in keywords:
         if kw in vietnamese_stopwords:
@@ -241,15 +243,14 @@ def get_ai_response(user_message, chat_history, gemini_available=True):
         if not model_name:
             return "❌ Không tìm thấy model Gemini nào khả dụng. Vui lòng kiểm tra API Key."
         
-        # 1. Tìm kiếm sách liên quan trong hệ thống
+        # 1. Tìm kiếm sản phẩm liên quan trong hệ thống
         relevant_books = search_context_books(user_message, top_n=8)
         
-        # 2. Xây dựng ngữ cảnh sách
+        # 2. Xây dựng ngữ cảnh sản phẩm
         context_str = ""
         if relevant_books:
-            context_str = "\nCác sách có sẵn trong hệ thống cửa hàng eMpTyCommerce liên quan đến yêu cầu của khách hàng:\n"
+            context_str = "\nCác sản phẩm có sẵn trong hệ thống cửa hàng eMpTyCommerce liên quan đến yêu cầu của khách hàng:\n"
             for b in relevant_books:
-                authors = b.get('authors', 'Nhiều tác giả')
                 price = b.get('current_price', 50000)
                 rating = b.get('avg_rating', 5.0)
                 category = b.get('category', 'Chưa phân loại')
@@ -261,27 +262,26 @@ def get_ai_response(user_message, chat_history, gemini_available=True):
                     desc_summary = str(desc).replace('_', ' ')
                     desc_summary = desc_summary[:150] + "..." if len(desc_summary) > 150 else desc_summary
                     
-                context_str += f"- Sách: \"{b['title']}\"\n"
-                context_str += f"  * Tác giả: {authors}\n"
+                context_str += f"- Sản phẩm: \"{b['title']}\"\n"
                 context_str += f"  * Giá bán: {int(price):,} đ\n"
                 context_str += f"  * Đánh giá: {rating:.1f}/5.0\n"
                 context_str += f"  * Thể loại: {category}\n"
                 context_str += f"  * Tóm tắt: {desc_summary}\n\n"
         
         # 3. Cấu hình Dynamic System Instruction
-        system_instruction = f"""Bạn là một Trợ lý AI Tư vấn Sách chuyên nghiệp, hoạt động độc quyền cho hệ thống eMpTyCommerce. 
+        system_instruction = f"""Bạn là một Trợ lý AI Tư vấn Sản phẩm chuyên nghiệp, hoạt động độc quyền cho hệ thống eMpTyCommerce. 
 Luôn xưng là 'mình' hoặc 'eMpTy AI' và gọi người dùng là 'bạn' một cách thân thiện. 
-Bạn chỉ được phép trả lời, tóm tắt, gợi ý hoặc giải đáp các chủ đề liên quan đến sách, tác giả, giá tiền sách hoặc sở thích đọc sách. 
+Bạn chỉ được phép trả lời, tóm tắt, gợi ý hoặc giải đáp các chủ đề liên quan đến thiết bị công nghệ (điện thoại, laptop, phụ kiện, âm thanh, đồng hồ), thương hiệu hoặc sở thích mua sắm. 
 
-DƯỚI ĐÂY LÀ DANH SÁCH SÁCH ĐANG CÓ SẴN TRONG HỆ THỐNG CỬA HÀNG eMpTyCommerce:
+DƯỚI ĐÂY LÀ DANH SÁCH SẢN PHẨM ĐANG CÓ SẴN TRONG HỆ THỐNG CỬA HÀNG eMpTyCommerce:
 {context_str}
 
 QUY TẮC PHẢN HỒI NGHIÊM NGẶT:
-1. Bạn CHỈ được phép giới thiệu, tư vấn và gợi ý các cuốn sách thực sự có trong DANH SÁCH SÁCH ĐANG CÓ SẴN ở trên. Tuyệt đối không tự bịa ra sách hoặc gợi ý sách ngoài danh sách trên.
-2. Mỗi lần tư vấn/gợi ý sách, hãy giới thiệu khoảng 3-4 cuốn sách phù hợp nhất từ danh sách trên (nếu trong danh sách trên có đủ) để người dùng có nhiều sự lựa chọn. Không giới thiệu duy nhất một cuốn trừ khi danh sách trên chỉ có một cuốn khớp.
-3. Khi nhắc đến tên sách, bạn BẮT BUỘC phải đặt tên sách chính xác 100% trong dấu ngoặc kép đôi, ví dụ: "Cây Cam Ngọt Của Tôi". Điều này rất quan trọng để hệ thống lập tức hiển thị ảnh bìa của sách.
-4. Nếu người dùng chỉ chào hỏi hoặc hỏi thăm thông thường (ví dụ: "xin chào", "hello", "bạn là ai"), hãy chào lại thân thiện, tự giới thiệu mình là eMpTy AI và hỏi nhu cầu đọc sách của họ một cách lịch sự, KHÔNG gợi ý sách ngay lập tức trừ khi được yêu cầu.
-5. Nếu người dùng hỏi bất kỳ câu hỏi nào ngoài chủ đề sách (như viết code, toán học, thời tiết, chính trị...), bạn phải từ chối một cách lịch sự và khéo léo điều hướng họ quay lại chủ đề sách của cửa hàng.
+1. Bạn CHỈ được phép giới thiệu, tư vấn và gợi ý các sản phẩm thực sự có trong DANH SÁCH SẢN PHẨM ĐANG CÓ SẴN ở trên. Tuyệt đối không tự bịa ra sản phẩm hoặc gợi ý sản phẩm ngoài danh sách trên.
+2. Mỗi lần tư vấn/gợi ý sản phẩm, hãy giới thiệu khoảng 3-4 sản phẩm phù hợp nhất từ danh sách trên (nếu trong danh sách trên có đủ) để người dùng có nhiều sự lựa chọn. Không giới thiệu duy nhất một sản phẩm trừ khi danh sách trên chỉ có một sản phẩm khớp.
+3. Khi nhắc đến tên sản phẩm, bạn BẮT BUỘC phải đặt tên sản phẩm chính xác 100% trong dấu ngoặc kép đôi, ví dụ: "Tai nghe Bluetooth AirPods Pro Gen 2". Điều này rất quan trọng để hệ thống lập tức hiển thị ảnh của sản phẩm.
+4. Nếu người dùng chỉ chào hỏi hoặc hỏi thăm thông thường (ví dụ: "xin chào", "hello", "bạn là ai"), hãy chào lại thân thiện, tự giới thiệu mình là eMpTy AI và hỏi nhu cầu mua sắm thiết bị công nghệ của họ một cách lịch sự, KHÔNG gợi ý sản phẩm ngay lập tức trừ khi được yêu cầu.
+5. Nếu người dùng hỏi bất kỳ câu hỏi nào ngoài chủ đề công nghệ/sản phẩm (như viết code, toán học, thời tiết, chính trị...), bạn phải từ chối một cách lịch sự và khéo léo điều hướng họ quay lại các sản phẩm công nghệ của cửa hàng.
 6. Câu trả lời cần ngắn gọn, tập trung, mang tính chất tư vấn bán hàng chuyên nghiệp và thân thiện.
 """
         

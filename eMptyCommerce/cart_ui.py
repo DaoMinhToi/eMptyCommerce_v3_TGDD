@@ -57,7 +57,7 @@ def render_cart_items_table(cart_id: int) -> pd.DataFrame:
     ]].copy()
     
     display_df.columns = [
-        'Product ID', 'Tên sách', 'Thể loại', 'Số lượng', 'Thêm lúc'
+        'Product ID', 'Tên sản phẩm', 'Thể loại', 'Số lượng', 'Thêm lúc'
     ]
     
     st.dataframe(display_df, use_container_width=True)
@@ -139,7 +139,7 @@ def render_cart_items_expandable(cart_id: int):
         with col_exp:
             price = int(item.get('current_price', 50000))
             qty = int(item['quantity'])
-            with st.expander(f"📖 {item['title']}"):
+            with st.expander(f"📱 {item['title']}"):
                 col1, col2, col3 = st.columns([2, 1, 1])
                 
                 with col1:
@@ -272,7 +272,7 @@ def render_shopping_cart_page(cart_id: int, book_data: pd.DataFrame):
             st.metric("Tổng tiền thanh toán", f"{selected_total_price:,}đ")
     else:
         st.info("📭 Giỏ hàng của bạn còn trống")
-        st.write("Hãy thêm sách từ danh sách sản phẩm!")
+        st.write("Hãy thêm sản phẩm vào giỏ hàng!")
     
     st.divider()
     

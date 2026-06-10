@@ -220,19 +220,38 @@ def load_reviews_data():
 
 
 @st.cache_data
-def get_book_reviews_data(book_id: int) -> list[dict]:
+def get_book_reviews_data(book_id) -> list[dict]:
     """
-    Đọc dữ liệu comments từ comments.csv và lọc theo product_id (book_id).
+    Đọc dữ liệu comments từ reviews.csv hoặc comments.csv và lọc theo product_id (book_id).
     """
     try:
+        # Ưu tiên đọc reviews.csv của TGDD trước
+        reviews_csv_path = os.path.join(DATA_DIR, 'reviews.csv')
+        if os.path.exists(reviews_csv_path):
+            df_reviews = pd.read_csv(reviews_csv_path)
+            # Ép kiểu product_id về string để so khớp chính xác
+            df_reviews['product_id'] = df_reviews['product_id'].astype(str).str.strip()
+            df_filtered = df_reviews[df_reviews['product_id'] == str(book_id).strip()]
+            
+            reviews_list = []
+            for _, row in df_filtered.iterrows():
+                reviews_list.append({
+                    "ma_kh": str(row.get("user_id", "Ẩn danh")),
+                    "so_sao": int(row.get("rating", 5)),
+                    "tieu_de": None,
+                    "noi_dung": row.get("review_text") if pd.notna(row.get("review_text")) else None,
+                    "ngay": row.get("date") if pd.notna(row.get("date")) else None
+                })
+            return reviews_list
+            
+        # Fallback về comments.csv cũ nếu không có reviews.csv
         comments_path = os.path.join(DATA_DIR, 'comments.csv')
         if not os.path.exists(comments_path):
             return []
         df_comments = pd.read_csv(comments_path)
-        # Lọc các bình luận của book_id này
-        df_book = df_comments[df_comments['product_id'] == book_id]
+        df_comments['product_id'] = df_comments['product_id'].astype(str).str.strip()
+        df_book = df_comments[df_comments['product_id'] == str(book_id).strip()]
         
-        # Chuyển đổi thành list[dict]
         reviews_list = []
         for _, row in df_book.iterrows():
             reviews_list.append({
@@ -244,8 +263,9 @@ def get_book_reviews_data(book_id: int) -> list[dict]:
             })
         return reviews_list
     except Exception as e:
-        print(f"Lỗi khi đọc comments.csv: {e}")
+        print(f"Lỗi khi đọc bình luận: {e}")
         return []
+
 
 
 
@@ -531,7 +551,7 @@ with st.sidebar:
     st.caption("📊 Thống kê dữ liệu")
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Sách", len(book_data))
+        st.metric("Sản phẩm", len(book_data))
         st.metric("Đánh giá", len(recommender.reviews_data))
     with col2:
         st.metric("Khách hàng", recommender.reviews_data['customer_id'].nunique())
@@ -682,11 +702,11 @@ if st.session_state.get("selected_book_for_reviews") is not None:
                 )
                 st.session_state["should_scroll_to_top"] = False
 
-            # Hộp chứa thông tin sách đang được xem đánh giá
+            # Hộp chứa thông tin sản phẩm đang được xem đánh giá
             st.markdown(f"""
             <div style="background: rgba(245, 166, 35, 0.1); border: 2px solid #f5a623; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
                 <h3 style="margin-top: 0; color: #f5a623; display: flex; align-items: center; gap: 8px;">
-                    <span>📖 Chi tiết đánh giá sách</span>
+                    <span>📱 Chi tiết đánh giá sản phẩm</span>
                 </h3>
             </div>
             """, unsafe_allow_html=True)
@@ -795,9 +815,9 @@ if st.session_state.get('search_similar_books') is not None or st.session_state.
             source_book = st.session_state.search_source_book
             similar_books = st.session_state.search_similar_books
             
-            st.success(f"✅ Tìm thấy sách: **{source_book['title']}**")
+            st.success(f"✅ Tìm thấy sản phẩm: **{source_book['title']}**")
             st.markdown(f"📂 Danh mục: *{source_book.get('category','N/A')}*")
-            st.markdown("##### 📚 5 sách có nội dung tương tự nhất:")
+            st.markdown("##### 📱 5 sản phẩm có nội dung tương tự nhất:")
             cols = st.columns(5)
             for i, (_, book) in enumerate(similar_books.iterrows()):
                 with cols[i]:
@@ -810,7 +830,7 @@ if st.session_state.get('search_similar_books') is not None or st.session_state.
                     if pd.notna(cover) and str(cover).startswith('http'):
                         img_html = f'<img src="{cover}" style="width:100%;height:200px;object-fit:cover;border-radius:8px 8px 0 0;">'
                     else:
-                        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📚</div>'
+                        img_html = '<div style="width:100%;height:200px;background:#f0f0f0;border-radius:8px 8px 0 0;display:flex;align-items:center;justify-content:center;font-size:36px;">📱</div>'
                     st.markdown(f"""
                     <div style="border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;
                                 box-shadow:0 2px 8px rgba(0,0,0,0.08);background:white;
@@ -970,15 +990,15 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     st.info(
         "🔄 **Hệ thống nhận diện:** Đây là người dùng mới (chưa có lịch sử đánh giá)\n\n"
         "→ Tự động chuyển sang mô hình **Content-Based Filtering 100%**\n\n"
-        "→ Gợi ý dựa trên **sách bạn đang quan tâm**"
+        "→ Gợi ý dựa trên **sản phẩm bạn đang quan tâm**"
     )
     
     # Chọn sách tham chiếu
-    st.subheader("📖 Bước 1: Chọn cuốn sách bạn đang quan tâm")
+    st.subheader("📱 Bước 1: Chọn sản phẩm bạn đang quan tâm")
     selected_book_id = st.selectbox(
-        "Chọn quyển sách:",
+        "Chọn sản phẩm:",
         book_data['product_id'].tolist(),
-        format_func=lambda x: book_dict.get(x, f"Sách {x}"),
+        format_func=lambda x: book_dict.get(x, f"Sản phẩm {x}"),
         key="cold_start_book"
     )
     
@@ -990,7 +1010,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     # Lấy thông tin sách được chọn
     selected_book = book_data[book_data['product_id'] == selected_book_id].iloc[0]
     
-    st.subheader("📚 Sách bạn đang xem:")
+    st.subheader("📱 Sản phẩm bạn đang xem:")
     col1, col2, col3 = st.columns([2, 3, 5])
     
     with col1:
@@ -1001,21 +1021,21 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
             st.image("https://picsum.photos/200/300?random=1", use_container_width=True)
     
     with col2:
-        st.write(f"**Tên sách:** {selected_book['title']}")
+        st.write(f"**Tên sản phẩm:** {selected_book['title']}")
         st.write(f"**Thể loại:** {selected_book['category']}")
     
     with col3:
         st.write("")  # Khoảng trống
 
-    # Hiển thị đánh giá và bình luận của sách đang xem khi người dùng click expander
-    with st.expander("💬 Xem đánh giá từ khách hàng của sách này", expanded=False):
+    # Hiển thị đánh giá và bình luận của sản phẩm đang xem khi người dùng click expander
+    with st.expander("💬 Xem đánh giá từ khách hàng của sản phẩm này", expanded=False):
         from ui_components import show_book_reviews
         book_reviews = get_book_reviews_data(selected_book_id)
         show_book_reviews(selected_book_id, book_reviews)
     st.markdown("---")
     
     # Nút lấy gợi ý
-    if st.button("🔍 Lấy gợi ý sách tương tự", key="btn_cold_start"):
+    if st.button("🔍 Lấy gợi ý sản phẩm tương tự", key="btn_cold_start"):
         with st.spinner("⏳ Đang tính toán gợi ý dựa trên Content-Based Filtering..."):
             try:
                 recommendations = recommender.get_content_based_recommendations(
@@ -1042,9 +1062,9 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     if st.session_state.get('cold_recommendations') is not None:
         recommendations = st.session_state.cold_recommendations
         if recommendations.empty:
-            st.warning("⚠️ Không tìm thấy sách tương tự")
+            st.warning("⚠️ Không tìm thấy sản phẩm tương tự")
         else:
-            st.success(f"✅ Tìm thấy {len(recommendations)} cuốn sách tương tự!")
+            st.success(f"✅ Tìm thấy {len(recommendations)} sản phẩm tương tự!")
             
             # CSS custom cho card sách
             st.markdown("""
@@ -1098,8 +1118,8 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
             </style>
             """, unsafe_allow_html=True)
             
-            st.subheader("📚 Bước 2: Sách được gợi ý dựa trên nội dung tương tự")
-            st.caption(f"Tìm thấy {len(recommendations)} sách có nội dung tương tự · Mô hình: Content-Based (TF-IDF + Cosine Similarity)")
+            st.subheader("📱 Bước 2: Sản phẩm được gợi ý dựa trên nội dung tương tự")
+            st.caption(f"Tìm thấy {len(recommendations)} sản phẩm có nội dung tương tự · Mô hình: Content-Based (TF-IDF + Cosine Similarity)")
             
             # Hiển thị 5 card mỗi hàng
             COLS_PER_ROW = 5
@@ -1122,7 +1142,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                         if pd.notna(cover) and str(cover).startswith('http'):
                             img_html = f'<img src="{cover}" style="width:100%;height:180px;object-fit:cover;border-radius:8px;">'
                         else:
-                            img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;">📚</div>'
+                            img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;">📱</div>'
                     
                         # Tính score
                         try:
@@ -1151,7 +1171,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                                 st.session_state["should_scroll_to_top"] = True
                                 st.rerun()
             
-            with st.spinner("⏳ Đang tìm sách thường được mua cùng nhau..."):
+            with st.spinner("⏳ Đang tìm sản phẩm thường được mua cùng nhau..."):
                 try:
                     frequently_bought = recommender.get_frequently_bought_together(
                         selected_book_id,
@@ -1159,10 +1179,10 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                     )
                     
                     if frequently_bought.empty:
-                        st.info("ℹ️ Chưa đủ dữ liệu để xác định sách thường được mua cùng với cuốn sách này. "
-                               "Hãy thử chọn cuốn sách phổ biến hơn!")
+                        st.info("ℹ️ Chưa đủ dữ liệu để xác định sản phẩm thường được mua cùng với sản phẩm này. "
+                               "Hãy thử chọn sản phẩm phổ biến hơn!")
                     else:
-                        st.success(f"✅ Tìm thấy {len(frequently_bought)} cuốn sách thường được mua cùng!")
+                        st.success(f"✅ Tìm thấy {len(frequently_bought)} sản phẩm thường được mua cùng!")
                         
                         # Hiển thị thẻ sản phẩm (5 cột một hàng)
                         cols = st.columns(5)
@@ -1183,7 +1203,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     
     # ========== SECTION: SẢN PHẨM BÁN CHẠY NHẤT ==========
     st.markdown("---")
-    st.subheader("🔥 Sách bán chạy nhất trên Tiki")
+    st.subheader("🔥 Sản phẩm bán chạy nhất")
     st.caption("Gợi ý dành cho bạn dựa trên lượt đánh giá cao nhất từ cộng đồng")
     
     try:
@@ -1191,9 +1211,9 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
         bestsellers = get_bestseller(top_n=10)
         
         if bestsellers.empty:
-            st.info("ℹ️ Không có dữ liệu sách bán chạy")
+            st.info("ℹ️ Không có dữ liệu sản phẩm bán chạy")
         else:
-            st.success(f"✅ Tìm thấy {len(bestsellers)} cuốn sách bán chạy nhất!")
+            st.success(f"✅ Tìm thấy {len(bestsellers)} sản phẩm bán chạy nhất!")
             
             # CSS custom cho card sách (nếu chưa được thêm)
             st.markdown("""
@@ -1253,7 +1273,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
             </style>
             """, unsafe_allow_html=True)
             
-            st.caption(f"Top {len(bestsellers)} sách có lượt đánh giá cao nhất · Sắp xếp bằng Bayesian Average")
+            st.caption(f"Top {len(bestsellers)} sản phẩm có lượt đánh giá cao nhất · Sắp xếp bằng Bayesian Average")
             
             # Hiển thị 5 card mỗi hàng
             COLS_PER_ROW = 5
@@ -1277,7 +1297,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                         if pd.notna(cover) and str(cover).startswith('http'):
                             img_html = f'<img src="{cover}" style="width:100%;height:180px;object-fit:cover;border-radius:8px;">'
                         else:
-                            img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;">📚</div>'
+                            img_html = '<div style="width:100%;height:180px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:40px;">📱</div>'
                         
                         # Render card
                         st.markdown(f"""
@@ -1301,7 +1321,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
                                 st.rerun()
     
     except Exception as e:
-        st.warning(f"⚠️ Không thể tải danh sách sách bán chạy: {str(e)}")
+        st.warning(f"⚠️ Không thể tải danh sách sản phẩm bán chạy: {str(e)}")
 
 
 # ============ KỊCH BẢN B: KHÁCH HÀNG CŨ (WARM-START) ============
@@ -1332,9 +1352,9 @@ else:
         print("Lỗi khi lấy danh sách loại trừ hiển thị:", e)
 
     # Tạo TABS cho các chức năng chính
-    tab1, tab2, tab3 = st.tabs(["🛍️ Danh mục sách", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá"])
+    tab1, tab2, tab3 = st.tabs(["🛍️ Danh mục sản phẩm", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá"])
     
-    # ============ TAB 1: DANH MỤC SÁCH ============
+    # ============ TAB 1: DANH MỤC SẢN PHẨM ============
     with tab1:
         st.subheader("🛍️ Duyệt theo Danh mục")
         
@@ -1372,11 +1392,11 @@ else:
             except Exception as e:
                 st.warning(f"⚠️ Lỗi khi tải dữ liệu danh mục: {str(e)}")
         else:
-            st.info("💡 Chọn một danh mục để xem sách")
+            st.info("💡 Chọn một danh mục để xem sản phẩm")
     
     # ============ TAB 2: GỢI Ý CHO BẠN ============
     with tab2:
-        st.subheader("🎯 Sách được gợi ý cho bạn")
+        st.subheader("🎯 Sản phẩm được gợi ý cho bạn")
         
         # Thông tin khách hàng (chỉ tính đánh giá thực tế từ clean_reviews.csv và đánh giá thủ công từ SQLite)
         customer_reviews = get_explicit_reviews_for_customer(selected_customer, reviews_data)
@@ -1418,9 +1438,9 @@ else:
             st.info("💡 Bấm nút để tính toán gợi ý dựa trên lịch sử đánh giá của bạn")
         else:
             if st.session_state.warm_recommendations.empty:
-                st.warning("⚠️ Không có gợi ý - Bạn đã đánh giá tất cả sách")
+                st.warning("⚠️ Không có gợi ý - Bạn đã đánh giá tất cả sản phẩm")
             else:
-                st.success(f"✅ Tìm thấy {len(st.session_state.warm_recommendations)} sách phù hợp!")
+                st.success(f"✅ Tìm thấy {len(st.session_state.warm_recommendations)} sản phẩm phù hợp!")
                 render_hybrid_recommendations_grid(st.session_state.warm_recommendations, cols_per_row=5)
     
     # ============ TAB 3: LỊCH SỬ ĐÁNH GIÁ ============
@@ -1433,9 +1453,9 @@ else:
         customer_reviews_display = customer_reviews.copy()
         customer_reviews_display['product_title'] = customer_reviews_display['product_id'].map(book_dict)
         customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating']]
-        customer_reviews_display.columns = ['ID Sách', 'Tên Sách', 'Đánh giá']
+        customer_reviews_display.columns = ['ID Sản phẩm', 'Tên Sản phẩm', 'Đánh giá']
         
-        st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sách đã đánh giá")
+        st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sản phẩm đã đánh giá")
         st.dataframe(customer_reviews_display, use_container_width=True, hide_index=True)
 
 
