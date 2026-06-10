@@ -3,11 +3,56 @@ import numpy as np
 from surprise import SVD, Dataset, Reader, accuracy, KNNWithMeans
 from sklearn.model_selection import train_test_split
 import warnings
+import os
 warnings.filterwarnings("ignore")
 
+# Định nghĩa thư mục dữ liệu tuyệt đối
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(CURRENT_DIR, 'data')
+
+def get_combined_reviews() -> pd.DataFrame:
+    """Đọc dữ liệu reviews gốc từ CSV và gộp các tương tác mới từ SQLite"""
+    reviews_path = os.path.join(DATA_DIR, 'clean_reviews.csv')
+    if os.path.exists(reviews_path):
+        base_reviews = pd.read_csv(reviews_path)
+    else:
+        base_reviews = pd.DataFrame(columns=['customer_id', 'product_id', 'rating'])
+        
+    try:
+        from db_utils import get_all_user_interactions
+        new_interactions = get_all_user_interactions()
+        
+        if not new_interactions.empty:
+            # Gộp hai tập dữ liệu
+            priority_map = {
+                'REVIEW': 4,
+                'PURCHASE': 3,
+                'ADD_TO_CART': 2,
+                'VIEW': 1
+            }
+            new_interactions['priority'] = new_interactions['interaction_type'].map(priority_map).fillna(0)
+            
+            base_reviews_copy = base_reviews.copy()
+            base_reviews_copy['priority'] = 4
+            
+            combined = pd.concat([base_reviews_copy, new_interactions[['customer_id', 'product_id', 'rating', 'priority']]], ignore_index=True)
+            
+            # Sắp xếp theo priority giảm dần, sau đó theo rating giảm dần
+            combined = combined.sort_values(
+                by=['priority', 'rating'], 
+                ascending=[False, False]
+            )
+            # Loại bỏ trùng lặp và giữ lại dòng đầu tiên (tương tác có độ ưu tiên cao nhất)
+            combined = combined.drop_duplicates(subset=['customer_id', 'product_id'], keep='first')
+            return combined[['customer_id', 'product_id', 'rating']].reset_index(drop=True)
+    except Exception as e:
+        print(f"⚠️ Lỗi gộp tương tác mới khi so sánh mô hình: {e}")
+        
+    return base_reviews
+
 def get_rmse_cf_and_hybrid():
-    """Tính RMSE thật của CF và Hybrid từ dataset clean_reviews.csv"""
-    df = pd.read_csv('data/clean_reviews.csv')
+    """Tính RMSE thật của CF và Hybrid từ tập dữ liệu cập nhật (gồm cả SQLite)"""
+    df = get_combined_reviews()
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 
     reader = Reader(rating_scale=(1, 5))
@@ -56,8 +101,8 @@ def get_rmse_knn():
     Returns:
         tuple: (rmse_knn, mae_knn) - Rounded to 4 decimal places
     """
-    # Bước 1: Đọc dữ liệu
-    df = pd.read_csv('data/clean_reviews.csv')
+    # Bước 1: Đọc dữ liệu cập nhật (CSV + SQLite)
+    df = get_combined_reviews()
     
     # Bước 2: Chia train/test (80/20)
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)

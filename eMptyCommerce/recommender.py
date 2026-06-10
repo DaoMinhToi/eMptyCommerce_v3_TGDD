@@ -17,6 +17,10 @@ import os
 
 warnings.filterwarnings("ignore")
 
+# Định nghĩa thư mục dữ liệu tuyệt đối
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(CURRENT_DIR, 'data')
+
 
 class HybridRecommender:
     """
@@ -86,7 +90,7 @@ class HybridRecommender:
         """
         try:
             # Đọc dữ liệu sách
-            book_path = 'data/clean_book_data.csv'
+            book_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
             if os.path.exists(book_path):
                 self.book_data = pd.read_csv(book_path).reset_index(drop=True)
                 self.known_products = set(self.book_data['product_id'].unique())
@@ -95,9 +99,10 @@ class HybridRecommender:
                 print(f"     {book_path} không tìm thấy!")
             
             # Đọc dữ liệu đánh giá
-            reviews_path = 'data/clean_reviews.csv'
+            reviews_path = os.path.join(DATA_DIR, 'clean_reviews.csv')
             if os.path.exists(reviews_path):
                 self.reviews_data = pd.read_csv(reviews_path)
+                self.reviews_data['is_recent'] = 0
                 self.known_customers = set(self.reviews_data['customer_id'].unique())
                 print(f"    Đọc {len(self.reviews_data)} đánh giá từ {reviews_path}")
             else:
@@ -326,9 +331,27 @@ class HybridRecommender:
                 print(f"   → Gợi ý dựa trên sản phẩm đang xem: {product_id_viewed}")
                 return self.get_content_based_recommendations(product_id_viewed, top_n)
             
-            # Nếu không có sản phẩm tham chiếu -> Trả về sản phẩm phổ biến nhất
+            # Nếu không có sản phẩm tham chiếu -> Thử lấy sản phẩm trong giỏ hàng (nếu có) trước khi fallback về phổ biến nhất
             else:
-                print(f"   → Không có sản phẩm tham chiếu → Trả về sản phẩm phổ biến nhất")
+                try:
+                    import streamlit as st
+                    if hasattr(st, 'session_state') and 'cart_id' in st.session_state:
+                        from db_utils import get_cart_items
+                        cart_items = get_cart_items(st.session_state.cart_id)
+                        if not cart_items.empty:
+                            # Lọc các cuốn sách có trong danh mục sản phẩm hợp lệ của hệ thống
+                            valid_items = cart_items[cart_items['product_id'].isin(self.known_products)]
+                            if not valid_items.empty:
+                                last_cart_product_id = int(valid_items.iloc[0]['product_id'])
+                                print(f"   → Gợi ý cho người dùng mới dựa trên sản phẩm trong giỏ hàng: {last_cart_product_id}")
+                                recs = self.get_content_based_recommendations(last_cart_product_id, top_n)
+                                if not recs.empty:
+                                    recs['popularity_score'] = recs['similarity_score']
+                                    return recs[['product_id', 'title', 'category', 'cover_link', 'popularity_score']]
+                except Exception as cart_err:
+                    print(f"     Lỗi kiểm tra giỏ hàng cho người dùng mới: {cart_err}")
+                
+                print(f"   → Không có sản phẩm tham chiếu hoặc giỏ hàng trống → Trả về sản phẩm phổ biến nhất")
                 try:
                     # Load book_data.csv (chứa n_review và avg_rating)
                     book_data_path = os.path.join(
@@ -370,7 +393,7 @@ class HybridRecommender:
                     # Final safety dedup after merge to prevent any remaining duplicates
                     merged = merged.drop_duplicates(subset='product_id', keep='first')
                     
-                    # Sắp xếp theo popularity_score giảm dần, lấy top_n
+            # Sắp xếp theo popularity_score giảm dần, lấy top_n
                     popular_products = merged.nlargest(top_n, 'popularity_score')[
                         ['product_id', 'title', 'category', 'cover_link', 'popularity_score']
                     ].copy()
@@ -387,6 +410,59 @@ class HybridRecommender:
         # ============ TRƯỜNG HỢP 2: WARM-START ============
         else:
             print(f" Warm-Start: Khách hàng {customer_id} có lịch sử đánh giá")
+            
+            # 1. Xác định các sản phẩm thuộc ngữ cảnh phiên làm việc hiện tại (Giỏ hàng & Sách đang xem)
+            session_context_pids = set()
+            try:
+                import streamlit as st
+                if hasattr(st, 'session_state'):
+                    # Lấy sản phẩm trong giỏ hàng hiện tại
+                    if 'cart_id' in st.session_state:
+                        from db_utils import get_cart_items
+                        cart_items = get_cart_items(st.session_state.cart_id)
+                        if not cart_items.empty:
+                            session_context_pids.update(cart_items['product_id'].dropna().astype(int).tolist())
+                    
+                    # Lấy sản phẩm đang xem chi tiết
+                    viewed_id = st.session_state.get("selected_book_for_reviews")
+                    if viewed_id is not None:
+                        session_context_pids.add(int(viewed_id))
+            except Exception as e:
+                print(f"     Lỗi lấy session context pids: {e}")
+                
+            if product_id_viewed is not None:
+                session_context_pids.add(int(product_id_viewed))
+
+            # 2. Lấy 3 tương tác gần đây nhất có ID khác nhau từ SQLite (để biết họ vừa quan tâm cuốn nào)
+            latest_unique_pids = []
+            if customer_id is not None:
+                try:
+                    import sqlite3
+                    from db_utils import DB_PATH
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT product_id, MAX(timestamp) as max_ts
+                        FROM User_Interactions 
+                        WHERE customer_id = ? 
+                        GROUP BY product_id
+                        ORDER BY max_ts DESC 
+                        LIMIT 3
+                    ''', (customer_id,))
+                    rows = cursor.fetchall()
+                    conn.close()
+                    for r in rows:
+                        latest_unique_pids.append(int(r[0]))
+                except Exception as db_err:
+                    print(f"     Lỗi lấy tương tác mới nhất từ SQLite: {db_err}")
+
+            # 3. Tự động thay đổi trọng số nếu phát hiện ngữ cảnh phiên hoặc tương tác gần đây (Demo Mode)
+            if session_context_pids or latest_unique_pids:
+                print("   → Phát hiện hành động/tương tác mới của người dùng trong phiên này")
+                print("   → Điều chỉnh trọng số: 80% Content-Based + 20% Collaborative Filtering")
+                content_weight = 0.8
+                collab_weight = 0.2
+            
             print(f"   → Kết hợp SVD ({collab_weight*100:.0f}%) + Content-Based ({content_weight*100:.0f}%)")
             
             # Lấy sản phẩm khách đã đánh giá
@@ -410,29 +486,71 @@ class HybridRecommender:
                     svd_scores[product_id] = pred.est  # estimated rating
                 except:
                     svd_scores[product_id] = 0  # Nếu predict fails
-            
+
             # Tính Content-Based scores
-            # Dùng trung bình similarity của các sản phẩm khách yêu thích (rating >= 4)
-            high_rated = self.reviews_data[
+            # Sử dụng tất cả tương tác (VIEW=1.0, ADD_TO_CART=3.0, PURCHASE=5.0) làm trọng số tính trung bình similarity.
+            interacted_reviews = self.reviews_data[
                 (self.reviews_data['customer_id'] == customer_id) &
-                (self.reviews_data['rating'] >= 4)
-            ]['product_id'].tolist()
+                (self.reviews_data['rating'] > 0)
+            ].copy()
             
+            # Các từ khóa nhận diện bộ truyện (Series Keywords) để kích hoạt Series Boost đặc biệt
+            SERIES_KEYWORDS = {'doraemon', 'conan', 'one piece', 'harry potter', 'sherlock', 'dragon ball', 'ehon', 'shin'}
+            
+            def get_series_bonus(title1, title2):
+                t1 = str(title1).lower()
+                t2 = str(title2).lower()
+                for kw in SERIES_KEYWORDS:
+                    if kw in t1 and kw in t2:
+                        return 1.0
+                return 0.0
+
+            # Tạo mapping product_id -> title để lookup nhanh
+            pid_to_title = dict(zip(self.book_data['product_id'], self.book_data['title']))
+
             content_scores = {}
             for product_id in unrated_products:
-                if not high_rated or product_id not in self.product_id_to_idx:
+                if interacted_reviews.empty or product_id not in self.product_id_to_idx:
                     content_scores[product_id] = 0
                 else:
-                    # Tính trung bình similarity với các sản phẩm khách yêu thích
-                    similarities = []
-                    for ref_pid in high_rated:
+                    weighted_sims = []
+                    weights = []
+                    for _, row in interacted_reviews.iterrows():
+                        ref_pid = int(row['product_id'])
+                        ref_rating = float(row['rating'])
+                        
+                        # Phân cấp bội số trọng số theo thứ tự thời gian gần nhất (SQLite) và giỏ hàng hoạt động
+                        multiplier = 1.0
+                        if ref_pid in session_context_pids:
+                            multiplier = 30.0
+                        elif ref_pid in latest_unique_pids:
+                            idx = latest_unique_pids.index(ref_pid)
+                            if idx == 0:
+                                multiplier = 100.0  # Tương tác gần nhất tuyệt đối (vừa mua/xem/đánh giá xong)
+                            elif idx == 1:
+                                multiplier = 10.0   # Tương tác gần nhì
+                            else:
+                                multiplier = 5.0    # Tương tác gần ba
+                        
+                        effective_weight = ref_rating * multiplier
+                        
                         if ref_pid in self.product_id_to_idx:
                             ref_idx = self.product_id_to_idx[ref_pid]
                             prod_idx = self.product_id_to_idx[product_id]
                             sim = self.cosine_sim_matrix[ref_idx][prod_idx]
-                            similarities.append(sim)
+                            
+                            # CỘNG THÊM SERIES BONUS NẾU CÙNG BỘ TRUYỆN
+                            ref_title = pid_to_title.get(ref_pid, "")
+                            prod_title = pid_to_title.get(product_id, "")
+                            sim += get_series_bonus(ref_title, prod_title)
+                            
+                            # Giới hạn sim tối đa là 1.0
+                            sim = min(1.0, sim)
+                            
+                            weighted_sims.append(sim * effective_weight)
+                            weights.append(effective_weight)
                     
-                    content_scores[product_id] = np.mean(similarities) if similarities else 0
+                    content_scores[product_id] = (sum(weighted_sims) / sum(weights)) if weights else 0
             
             # Kết hợp scores
             hybrid_scores = {}
@@ -441,7 +559,7 @@ class HybridRecommender:
                 rating_range = self.rating_max - self.rating_min
                 normalized_svd = (svd_scores[product_id] - self.rating_min) / rating_range if rating_range > 0 else 0
                 normalized_svd = max(0, min(1, normalized_svd))  # Clip to [0, 1]
-                normalized_content = content_scores[product_id]  # Cosine sim đã là [0, 1]
+                normalized_content = max(0.0, min(1.0, content_scores[product_id]))  # Clip content similarity to [0, 1]
                 
                 # Tính hybrid score
                 hybrid_scores[product_id] = (
@@ -544,6 +662,64 @@ class HybridRecommender:
             print(f"  Lỗi: Sản phẩm {product_id} không tồn tại trong tập dữ liệu huấn luyện")
             print(f"   Chi tiết: {e}")
             return pd.DataFrame()  # Trả về DataFrame rỗng
+
+    def update_and_retrain(self):
+        """
+        Tự động nạp dữ liệu tương tác người dùng mới từ SQLite và huấn luyện lại Collaborative Filtering.
+        """
+        try:
+            # 1. Đọc dữ liệu lịch sử gốc từ CSV
+            reviews_path = os.path.join(DATA_DIR, 'clean_reviews.csv')
+            if os.path.exists(reviews_path):
+                base_reviews = pd.read_csv(reviews_path)
+            else:
+                base_reviews = pd.DataFrame(columns=['customer_id', 'product_id', 'rating'])
+                
+            # 2. Truy xuất tương tác mới từ SQLite
+            from db_utils import get_all_user_interactions
+            new_interactions = get_all_user_interactions()
+            
+            if not new_interactions.empty:
+                # Gộp hai tập dữ liệu
+                # Thiết lập độ ưu tiên để giữ lại tương tác chất lượng nhất: REVIEW > PURCHASE > ADD_TO_CART > VIEW
+                priority_map = {
+                    'REVIEW': 4,
+                    'PURCHASE': 3,
+                    'ADD_TO_CART': 2,
+                    'VIEW': 1
+                }
+                new_interactions['priority'] = new_interactions['interaction_type'].map(priority_map).fillna(0)
+                new_interactions['is_recent'] = 1
+                
+                base_reviews_copy = base_reviews.copy()
+                base_reviews_copy['priority'] = 4
+                base_reviews_copy['is_recent'] = 0
+                
+                combined = pd.concat([base_reviews_copy, new_interactions[['customer_id', 'product_id', 'rating', 'priority', 'is_recent']]], ignore_index=True)
+                
+                # Sắp xếp theo priority giảm dần, sau đó theo rating giảm dần
+                combined = combined.sort_values(
+                    by=['priority', 'rating'], 
+                    ascending=[False, False]
+                )
+                # Loại bỏ trùng lặp và giữ lại dòng đầu tiên (tương tác có độ ưu tiên cao nhất)
+                combined = combined.drop_duplicates(subset=['customer_id', 'product_id'], keep='first')
+                self.reviews_data = combined[['customer_id', 'product_id', 'rating', 'is_recent']].reset_index(drop=True)
+            else:
+                self.reviews_data = base_reviews.copy()
+                self.reviews_data['is_recent'] = 0
+                
+            # Cập nhật danh sách khách hàng đã biết
+            self.known_customers = set(self.reviews_data['customer_id'].unique())
+            
+            # 3. Huấn luyện lại Collaborative Filtering (SVD & KNN)
+            print("🚀 [Dynamic Retraining] Đang tự động huấn luyện lại Collaborative Filtering...")
+            self.train_collaborative()
+            print("✓ [Dynamic Retraining] Huấn luyện lại hoàn tất thành công!")
+            return True
+        except Exception as e:
+            print(f"❌ [Dynamic Retraining] Lỗi khi tự động huấn luyện lại: {e}")
+            return False
 
 
 class KNNRecommender:

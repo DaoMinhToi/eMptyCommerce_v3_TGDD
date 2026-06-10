@@ -307,6 +307,27 @@ def render_cart_sidebar(cart_id: int):
         st.markdown("---")
 
 
+def record_purchase_and_retrain(customer_id: Optional[int], items_df: pd.DataFrame):
+    """
+    Ghi nhận tương tác PURCHASE (5.0 sao) cho các sách đã thanh toán và retrain mô hình.
+    """
+    if customer_id is None or items_df.empty:
+        return
+    
+    try:
+        from db_utils import add_user_interaction
+        for _, row in items_df.iterrows():
+            product_id = int(row['product_id'])
+            add_user_interaction(customer_id, product_id, 'PURCHASE', 5.0)
+            
+        recommender_instance = st.session_state.get('recommender')
+        if recommender_instance is not None:
+            recommender_instance.update_and_retrain()
+        st.session_state.warm_recommendations = None
+    except Exception as e:
+        print(f"❌ Lỗi ghi nhận tương tác PURCHASE và retrain: {e}")
+
+
 def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
     """
     Render trang thanh toán (Checkout) hoàn chỉnh.
@@ -485,6 +506,8 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                             pid = int(row['product_id'])
                             if pid in selected_cart_items:
                                 del selected_cart_items[pid]
+                        # Ghi nhận tương tác PURCHASE và tự động học gợi ý
+                        record_purchase_and_retrain(customer_id, items_df)
                         st.session_state.checkout_success_order_id = order_id
                         st.session_state.checkout_success_amount = total_amount
                         st.session_state.checkout_success_method = 'COD'
@@ -585,6 +608,9 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                         pid = int(row['product_id'])
                         if pid in selected_cart_items:
                             del selected_cart_items[pid]
+                    # Ghi nhận tương tác PURCHASE và tự động học gợi ý
+                    cust_id = st.session_state.get('current_customer_id')
+                    record_purchase_and_retrain(cust_id, items_df)
                     st.session_state.checkout_success_order_id = order_id
                     st.session_state.checkout_success_amount = total_amount
                     st.session_state.checkout_success_method = 'BANK_TRANSFER'
@@ -619,6 +645,9 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                             pid = int(row['product_id'])
                             if pid in selected_cart_items:
                                 del selected_cart_items[pid]
+                        # Ghi nhận tương tác PURCHASE và tự động học gợi ý
+                        cust_id = st.session_state.get('current_customer_id')
+                        record_purchase_and_retrain(cust_id, items_df)
                         st.session_state.checkout_success_order_id = order_id
                         st.session_state.checkout_success_amount = total_amount
                         st.session_state.checkout_success_method = 'BANK_TRANSFER'
@@ -645,14 +674,19 @@ def render_purchase_history_page(customer_id: Optional[int], session_id: Optiona
     # Lấy lịch sử đơn hàng
     orders = get_customer_orders(customer_id=customer_id, session_id=session_id)
     
-    if not orders:
+    # Lọc chỉ hiển thị đơn hàng đã thanh toán (Paid) hoặc đơn hàng COD (chờ giao hàng)
+    visible_orders = []
+    if orders:
+        visible_orders = [o for o in orders if o.get('payment_status') == 'Paid' or o.get('payment_method') == 'COD']
+    
+    if not visible_orders:
         st.info("📭 Bạn chưa có đơn hàng nào trong lịch sử.")
         if st.button("🛍️ Mua sắm ngay", type="primary"):
             st.session_state.view = "shopping"
             st.rerun()
         return
         
-    for order in orders:
+    for order in visible_orders:
         order_id = order['order_id']
         total_amount = order['total_amount']
         method = order['payment_method']
@@ -700,10 +734,10 @@ def render_purchase_history_page(customer_id: Optional[int], session_id: Optiona
             </div>
             """, unsafe_allow_html=True)
             
-            st.write("**Chi tiết sản phẩm đã mua:**")
+            st.write("**Chi tiết sản phẩm:**")
             
             for item in items:
-                col_cover, col_desc = st.columns([1, 6])
+                col_cover, col_desc, col_rate = st.columns([1.2, 4.3, 2.5])
                 with col_cover:
                     if item.get('cover_link') and pd.notna(item['cover_link']) and item['cover_link'] != '':
                         st.image(item['cover_link'], use_container_width=True)
@@ -714,4 +748,58 @@ def render_purchase_history_page(customer_id: Optional[int], session_id: Optiona
                     st.write(f"📂 Thể loại: {item['category']}")
                     st.write(f"💵 Đơn giá: {item['price']:,}đ x {item['quantity']}")
                     st.write(f"💰 Thành tiền: {item['price'] * item['quantity']:,}đ")
+                
+                with col_rate:
+                    if customer_id is not None:
+                        # Chỉ cho phép đánh giá nếu đơn hàng đã được thanh toán (Paid) hoặc là đơn COD
+                        if status == 'Paid' or method == 'COD':
+                            pid = int(item['product_id'])
+                            # Lấy đánh giá hiện tại nếu có trong DB
+                            current_val = 5.0
+                            try:
+                                from db_utils import get_db_connection
+                                with get_db_connection() as conn:
+                                    cursor = conn.cursor()
+                                    cursor.execute(
+                                        "SELECT rating FROM User_Interactions WHERE customer_id = ? AND product_id = ? AND interaction_type = 'REVIEW'", 
+                                        (customer_id, pid)
+                                    )
+                                    row = cursor.fetchone()
+                                    if row:
+                                        current_val = float(row['rating'])
+                            except Exception:
+                                pass
+                            
+                            rating_options = [1, 2, 3, 4, 5]
+                            default_idx = rating_options.index(int(current_val)) if int(current_val) in rating_options else 4
+                            
+                            selected_stars = st.selectbox(
+                                "⭐ Đánh giá của bạn:",
+                                options=rating_options,
+                                index=default_idx,
+                                format_func=lambda x: "⭐" * x,
+                                key=f"rate_{order_id}_{pid}"
+                            )
+                            
+                            if st.button("Gửi đánh giá", key=f"btn_rate_{order_id}_{pid}", use_container_width=True):
+                                from db_utils import add_user_interaction
+                                with st.spinner("⏳ Đang gửi đánh giá và cập nhật gợi ý..."):
+                                    # Lưu vào database
+                                    add_user_interaction(customer_id, pid, 'REVIEW', float(selected_stars))
+                                    # Retrain mô hình
+                                    try:
+                                        recommender_instance = st.session_state.get('recommender')
+                                        if recommender_instance is not None:
+                                            recommender_instance.update_and_retrain()
+                                        st.session_state.warm_recommendations = None
+                                        st.toast(f"⭐ Đã ghi nhận đánh giá {selected_stars} sao!", icon="🎉")
+                                        import time
+                                        time.sleep(0.8)
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Lỗi khi tự học: {e}")
+                        else:
+                            st.caption("⏳ Chờ thanh toán để đánh giá")
+                    else:
+                        st.caption("🔒 Đăng nhập để đánh giá")
                 st.divider()

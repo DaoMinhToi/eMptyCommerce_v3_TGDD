@@ -143,6 +143,19 @@ def init_database():
                 )
             ''')
             
+            # Bảng User_Interactions để lưu vết tương tác khách hàng cũ (để tự động học gợi ý)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS User_Interactions (
+                    interaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    customer_id INTEGER NOT NULL,
+                    product_id INTEGER NOT NULL,
+                    interaction_type TEXT NOT NULL,
+                    rating REAL NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(customer_id, product_id, interaction_type)
+                )
+            ''')
+            
             print(f"✓ Database khởi tạo thành công: {DB_PATH}")
             
     except Exception as e:
@@ -895,5 +908,52 @@ def get_customer_orders(customer_id: Optional[int] = None, session_id: Optional[
     except Exception as e:
         print(f"❌ Lỗi truy xuất lịch sử mua hàng: {e}")
         return []
+
+
+def add_user_interaction(customer_id: Optional[int], product_id: int, interaction_type: str, rating: float) -> bool:
+    """
+    Ghi nhận tương tác của khách hàng (VIEW, ADD_TO_CART, PURCHASE) vào bảng User_Interactions.
+    Chỉ lưu nếu customer_id không phải là None (khách cũ đã đăng nhập).
+    """
+    if customer_id is None:
+        return False
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Sử dụng INSERT OR REPLACE để cập nhật lại rating và timestamp nếu đã tồn tại tương tác cùng loại
+            cursor.execute('''
+                INSERT OR REPLACE INTO User_Interactions (customer_id, product_id, interaction_type, rating)
+                VALUES (?, ?, ?, ?)
+            ''', (customer_id, product_id, interaction_type, rating))
+            return True
+    except Exception as e:
+        print(f"❌ Lỗi ghi nhận tương tác người dùng: {e}")
+        return False
+
+
+def get_all_user_interactions() -> pd.DataFrame:
+    """
+    Truy xuất tất cả tương tác người dùng từ database để huấn luyện Collaborative Filtering.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT customer_id, product_id, rating, interaction_type
+                FROM User_Interactions
+            ''')
+            rows = cursor.fetchall()
+            if not rows:
+                return pd.DataFrame(columns=['customer_id', 'product_id', 'rating', 'interaction_type'])
+            
+            df = pd.DataFrame([dict(row) for row in rows])
+            # Ép kiểu dữ liệu
+            df['customer_id'] = df['customer_id'].astype(int)
+            df['product_id'] = df['product_id'].astype(int)
+            df['rating'] = df['rating'].astype(float)
+            return df
+    except Exception as e:
+        print(f"❌ Lỗi lấy danh sách tương tác người dùng: {e}")
+        return pd.DataFrame(columns=['customer_id', 'product_id', 'rating', 'interaction_type'])
 
 

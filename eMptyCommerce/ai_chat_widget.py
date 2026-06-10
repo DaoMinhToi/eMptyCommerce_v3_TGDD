@@ -241,6 +241,13 @@ def render_floating_chat_widget():
                         "content": ai_response
                     })
                     
+                    # Lưu lịch sử chat vào query params
+                    import json
+                    try:
+                        st.query_params["chat_history"] = json.dumps(st.session_state.messages)
+                    except Exception as e:
+                        print(f"⚠️ Lỗi lưu chat_history: {e}")
+                    
                     st.rerun()
                 
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -268,8 +275,8 @@ def display_ai_message_with_images(ai_response):
     st.write(f"**eMpTy AI:** {ai_response}")
     
     # Tìm các tiêu đề sách trong response (các text trong ngoặc kép)
-    # Pattern: "Tên Sách" hoặc Tên Sách
-    pattern = r'"([^"]{5,})"'  # Tìm text trong ngoặc kép, dài từ 5 ký tự trở lên
+    # Pattern: "Tên Sách" hoặc Tên Sách (độ dài >= 2)
+    pattern = r'"([^"]{2,})"'  # Tìm text trong ngoặc kép, dài từ 2 ký tự trở lên
     book_titles = re.findall(pattern, ai_response)
     
     # Lấy hình ảnh cho mỗi sách
@@ -280,15 +287,22 @@ def display_ai_message_with_images(ai_response):
         cols = st.columns(2)
         book_count = 0
         
+        # Các từ khóa thông dụng cần lọc bỏ nếu vô tình bị đặt trong ngoặc kép
+        ignored_words = {
+            'của', 'tác giả', 'author', 'một cuốn', 'sách', 'tập', 'bạn', 'tôi', 'mình', 
+            'xin chào', 'hello', 'eMpty AI', 'tiểu thuyết', 'trinh thám', 'kinh tế'
+        }
+        
         for title in book_titles[:4]:  # Giới hạn 4 sách
+            clean_title = title.strip()
             # Lọc bỏ những title không phải tên sách
-            if len(title) > 5 and title.lower() not in ['của', 'tác giả', 'author', 'một cuốn']:
-                img_url = get_book_image(title)
+            if len(clean_title) >= 2 and clean_title.lower() not in ignored_words:
+                img_url = get_book_image(clean_title)
                 
                 if img_url:
                     with cols[book_count % 2]:
                         with st.container(border=True):
-                            st.image(img_url, use_container_width=True, caption=title[:30])
+                            st.image(img_url, use_container_width=True, caption=clean_title[:30])
                             book_count += 1
 
 
@@ -365,6 +379,13 @@ def render_simple_floating_button():
                         "role": "assistant",
                         "content": ai_response
                     })
+                    
+                    # Lưu lịch sử chat vào query params
+                    import json
+                    try:
+                        st.query_params["chat_history"] = json.dumps(st.session_state.messages)
+                    except Exception as e:
+                        print(f"⚠️ Lỗi lưu chat_history: {e}")
                     
                     st.success("✅ Phản hồi hoàn tất!", icon="✅")
 

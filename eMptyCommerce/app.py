@@ -28,7 +28,7 @@ from ui_components import (
 )
 from ai_chat_widget import render_simple_floating_button
 from ai_utils import init_gemini_api
-from db_utils import add_to_cart, init_database, get_or_create_cart, merge_cart
+from db_utils import add_to_cart, init_database, get_or_create_cart, merge_cart, add_user_interaction
 from cart_ui import render_cart_sidebar, render_shopping_cart_page, render_purchase_history_page
 
 
@@ -88,7 +88,16 @@ if 'customer_type' not in st.session_state:
 # ==================== KHỞI TẠO SESSION STATE CHO CHAT AI ====================
 # Lịch sử cuộc trò chuyện với AI Trợ lý tư vấn sách
 if 'messages' not in st.session_state:
-    st.session_state.messages = []
+    import json
+    chat_history_param = st.query_params.get("chat_history")
+    if chat_history_param:
+        try:
+            st.session_state.messages = json.loads(chat_history_param)
+        except Exception as e:
+            print(f"⚠️ Lỗi khôi phục chat_history từ URL: {e}")
+            st.session_state.messages = []
+    else:
+        st.session_state.messages = []
 
 # Ghi nhận ID khách hàng hiện tại để detect khi người dùng thay đổi
 if 'current_customer_id' not in st.session_state:
@@ -103,9 +112,7 @@ if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
 # Khởi tạo database
-if 'db_initialized' not in st.session_state:
-    init_database()
-    st.session_state.db_initialized = True
+init_database()
 
 # Khởi tạo cart_id dựa trên loại khách hàng
 if 'cart_id' not in st.session_state:
@@ -129,6 +136,15 @@ def handle_add_to_cart(product_id: int, title: str = ""):
         st.warning("🔒 Vui lòng chọn 'Khách hàng cũ' và đăng nhập bằng ID để thêm vào giỏ hàng.")
         return
     add_to_cart(st.session_state.cart_id, product_id, 1)
+    
+    # Ghi nhận tương tác ADD_TO_CART và tự động huấn luyện lại mô hình
+    if st.session_state.current_customer_id is not None:
+        with st.spinner("⏳ Đang thêm vào giỏ và tối ưu hóa gợi ý..."):
+            add_user_interaction(st.session_state.current_customer_id, product_id, 'ADD_TO_CART', 3.0)
+            recommender_instance = load_recommender_model()
+            recommender_instance.update_and_retrain()
+            st.session_state.warm_recommendations = None
+        
     if title:
         st.success(f"✅ Đã thêm '{title[:30]}...' vào giỏ hàng")
     else:
@@ -166,6 +182,7 @@ def load_recommender_model():
     Load mô hình HybridRecommender một lần duy nhất.
     Streamlit sẽ cache kết quả để tránh phải huấn luyện lại model mỗi lần reload.
     """
+    # Invalidate cache due to class updates (added series bonus and dynamic weights v4)
     # Thay đổi thư mục làm việc để đảm bảo load dữ liệu đúng
     original_cwd = os.getcwd()
     os.chdir(APP_DIR)
@@ -282,9 +299,50 @@ def get_bestseller(top_n=10):
         return pd.DataFrame()
 
 
+def get_explicit_reviews_for_customer(customer_id, reviews_df):
+    """
+    Trích xuất danh sách các đánh giá thực tế (explicit reviews) của khách hàng
+    (bao gồm các đánh giá lịch sử từ file clean_reviews.csv và đánh giá thủ công từ SQLite)
+    """
+    # 1. Lấy đánh giá lịch sử từ file clean_reviews.csv
+    base_reviews = reviews_df[reviews_df['customer_id'] == customer_id].copy() if reviews_df is not None else pd.DataFrame()
+    base_reviews['source'] = 'history'
+    
+    # 2. Lấy các đánh giá thủ công mới từ SQLite (interaction_type = 'REVIEW')
+    try:
+        from db_utils import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT customer_id, product_id, rating 
+                FROM User_Interactions 
+                WHERE customer_id = ? AND interaction_type = 'REVIEW'
+            ''', (customer_id,))
+            new_revs = cursor.fetchall()
+            if new_revs:
+                df_new_revs = pd.DataFrame([dict(r) for r in new_revs])
+                df_new_revs['source'] = 'new'
+                customer_reviews = pd.concat([base_reviews, df_new_revs], ignore_index=True)
+            else:
+                customer_reviews = base_reviews
+    except Exception as e:
+        print(f"⚠️ Lỗi tải đánh giá mới từ SQLite: {e}")
+        customer_reviews = base_reviews
+        
+    # Ưu tiên 'new' review hơn 'history' review và loại bỏ trùng lặp theo product_id
+    if not customer_reviews.empty:
+        customer_reviews = customer_reviews.sort_values(
+            by='source', ascending=False
+        ).drop_duplicates(subset=['product_id'], keep='first')
+        
+    return customer_reviews
+
+
 # ==================== KHỞI TẠO DỮ LIỆU ====================
+
 with st.spinner("⏳ Đang tải mô hình và dữ liệu..."):
     recommender = load_recommender_model()
+    st.session_state.recommender = recommender
     book_data = load_book_data()
     reviews_data = load_reviews_data()
 
@@ -340,6 +398,9 @@ with st.sidebar:
     
     # Callback để reset thanh tìm kiếm khi thay đổi kịch bản
     def reset_search_on_customer_type_change():
+        new_type = st.session_state.customer_type_radio
+        st.session_state.customer_type = new_type
+        
         st.session_state.search_query = ''
         st.session_state.do_search = False
         st.session_state.last_input = ''
@@ -348,6 +409,14 @@ with st.sidebar:
         st.session_state.search_error = None
         # ==================== XÓA CHAT KHI ĐỔI KỊCH BẢN ====================
         st.session_state.messages = []
+        
+        # Cập nhật query parameters trực tiếp trong callback để tránh double rerun
+        chat_hist = st.query_params.get("chat_history")
+        st.query_params.clear()
+        st.query_params["customer_type"] = new_type
+        if chat_hist:
+            st.query_params["chat_history"] = chat_hist
+            
         st.session_state.current_customer_id = None
         st.session_state.warm_recommendations = None
         st.session_state["selected_book_for_reviews"] = None
@@ -373,12 +442,22 @@ with st.sidebar:
     st.session_state.customer_type = customer_type
 
     def sync_query_params():
-        params = {"customer_type": st.session_state.customer_type}
-        if st.session_state.customer_type == "👥 Khách hàng cũ" and st.session_state.current_customer_id is not None:
-            params["customer_id"] = str(st.session_state.current_customer_id)
-        st.query_params.clear()
-        for key, value in params.items():
-            st.query_params[key] = value
+        # Kiểm tra xem query params hiện tại có khớp với session_state không
+        current_type = st.query_params.get("customer_type")
+        current_id = st.query_params.get("customer_id")
+        
+        target_type = st.session_state.customer_type
+        target_id = str(st.session_state.current_customer_id) if (st.session_state.customer_type == "👥 Khách hàng cũ" and st.session_state.current_customer_id is not None) else None
+        
+        # Chỉ cập nhật nếu có sự khác biệt để tránh kích hoạt rerun vô hạn hoặc thừa
+        if current_type != target_type or current_id != target_id:
+            chat_hist = st.query_params.get("chat_history")
+            st.query_params.clear()
+            st.query_params["customer_type"] = target_type
+            if target_id is not None:
+                st.query_params["customer_id"] = target_id
+            if chat_hist:
+                st.query_params["chat_history"] = chat_hist
     
     if customer_type == "👥 Khách hàng cũ":
         # ==================== CALLBACK KHI ĐỔI CUSTOMER ID ====================
@@ -409,7 +488,14 @@ with st.sidebar:
                     merge_cart(st.session_state.session_id, new_customer_id)
                     st.session_state.last_merged_customer_id = new_customer_id
                 st.session_state.cart_id = get_or_create_cart(customer_id=new_customer_id)
-            sync_query_params()
+                
+                # Cập nhật query parameters trực tiếp trong callback
+                chat_hist = st.query_params.get("chat_history")
+                st.query_params.clear()
+                st.query_params["customer_type"] = st.session_state.customer_type
+                st.query_params["customer_id"] = str(new_customer_id)
+                if chat_hist:
+                    st.query_params["chat_history"] = chat_hist
         
         # Xác định index mặc định để giữ phiên đăng nhập khi reload
         default_index = 0
@@ -446,10 +532,10 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Sách", len(book_data))
-        st.metric("Đánh giá", len(reviews_data))
+        st.metric("Đánh giá", len(recommender.reviews_data))
     with col2:
-        st.metric("Khách hàng", reviews_data['customer_id'].nunique())
-        st.metric("Trung bình", f"{reviews_data['rating'].mean():.2f}")
+        st.metric("Khách hàng", recommender.reviews_data['customer_id'].nunique())
+        st.metric("Trung bình", f"{recommender.reviews_data['rating'].mean():.2f}")
     
     st.markdown("---")
     
@@ -558,6 +644,15 @@ reviews_placeholder = st.empty()
 if st.session_state.get("selected_book_for_reviews") is not None:
     view_book_id = st.session_state["selected_book_for_reviews"]
     
+    # Ghi nhận tương tác VIEW và tự động huấn luyện lại mô hình nếu là khách hàng cũ
+    if st.session_state.current_customer_id is not None:
+        if st.session_state.get("last_recorded_view_book_id") != view_book_id:
+            add_user_interaction(st.session_state.current_customer_id, view_book_id, 'VIEW', 1.0)
+            recommender_instance = load_recommender_model()
+            recommender_instance.update_and_retrain()
+            st.session_state.last_recorded_view_book_id = view_book_id
+            st.session_state.warm_recommendations = None
+            
     # Lấy thông tin sách
     matching_books = book_data[book_data['product_id'] == view_book_id]
     if not matching_books.empty:
@@ -632,11 +727,44 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
         Tìm sách tương tự dựa trên TF-IDF từ recommender module.
         Đảm bảo kết quả consistent với Content-Based model.
         """
+        import unicodedata
         book_df = recommender.book_data
         tfidf_matrix = recommender.tfidf_matrix
         
-        query_lower = query_title.lower().strip()
-        matches = book_df[book_df['title'].str.lower().str.contains(query_lower, na=False)]
+        def normalize_nfc(s):
+            if not isinstance(s, str):
+                return ""
+            return unicodedata.normalize('NFC', s.lower().strip())
+            
+        def remove_accents(s):
+            if not isinstance(s, str):
+                return ""
+            s = unicodedata.normalize('NFD', s.lower().strip())
+            s = ''.join([c for c in s if not unicodedata.combining(c)])
+            return s.replace('đ', 'd').replace('Đ', 'D')
+            
+        query_norm = normalize_nfc(query_title)
+        words_norm = query_norm.split()
+        if not words_norm:
+            return None, None, "Vui lòng nhập từ khóa tìm kiếm!"
+            
+        # 1. Thử khớp với NFC normalization trước
+        mask = pd.Series(True, index=book_df.index)
+        titles_norm = book_df['title'].apply(normalize_nfc)
+        for w in words_norm:
+            mask = mask & titles_norm.str.contains(w, regex=False, na=False)
+        matches = book_df[mask]
+        
+        # 2. Nếu không tìm thấy, thử khớp không dấu (accent-insensitive) làm fallback
+        if matches.empty:
+            query_no_accent = remove_accents(query_title)
+            words_no_accent = query_no_accent.split()
+            if words_no_accent:
+                mask_no_accent = pd.Series(True, index=book_df.index)
+                titles_no_accent = book_df['title'].apply(remove_accents)
+                for w in words_no_accent:
+                    mask_no_accent = mask_no_accent & titles_no_accent.str.contains(w, regex=False, na=False)
+                matches = book_df[mask_no_accent]
         
         if matches.empty:
             return None, None, "Không tìm thấy sách có tên phù hợp. Thử nhập tên khác!"
@@ -1186,6 +1314,23 @@ else:
         "**Mô hình Hybrid:** 60% SVD + 40% Content-Based"
     )
     
+    # Lấy các product_id cần loại bỏ khỏi giao diện hiển thị lịch sử (chỉ có VIEW hoặc ADD_TO_CART mà chưa mua)
+    exclude_pids = set()
+    try:
+        from db_utils import get_db_connection
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT product_id FROM User_Interactions 
+                WHERE customer_id = ? AND interaction_type IN ('VIEW', 'ADD_TO_CART')
+                EXCEPT
+                SELECT product_id FROM User_Interactions 
+                WHERE customer_id = ? AND interaction_type = 'PURCHASE'
+            """, (selected_customer, selected_customer))
+            exclude_pids = {int(row['product_id']) for row in cursor.fetchall()}
+    except Exception as e:
+        print("Lỗi khi lấy danh sách loại trừ hiển thị:", e)
+
     # Tạo TABS cho các chức năng chính
     tab1, tab2, tab3 = st.tabs(["🛍️ Danh mục sách", "🎯 Gợi ý cho bạn", "📋 Lịch sử đánh giá"])
     
@@ -1233,17 +1378,20 @@ else:
     with tab2:
         st.subheader("🎯 Sách được gợi ý cho bạn")
         
-        # Thông tin khách hàng
-        customer_reviews = reviews_data[reviews_data['customer_id'] == selected_customer]
+        # Thông tin khách hàng (chỉ tính đánh giá thực tế từ clean_reviews.csv và đánh giá thủ công từ SQLite)
+        customer_reviews = get_explicit_reviews_for_customer(selected_customer, reviews_data)
         rated_books = customer_reviews['product_id'].tolist()
-        avg_rating = customer_reviews['rating'].mean()
+        avg_rating = customer_reviews['rating'].mean() if not customer_reviews.empty else 0.0
         
         render_customer_info_metrics(len(rated_books), avg_rating)
         
         # Nút lấy gợi ý
         if st.button("🔍 Tính toán gợi ý Hybrid", key="btn_warm_start", use_container_width=True):
-            with st.spinner("⏳ Đang tính toán..."):
+            with st.spinner("⏳ Đang nạp dữ liệu và tính toán gợi ý..."):
                 try:
+                    # Cập nhật các tương tác mới nhất từ SQLite và huấn luyện lại mô hình
+                    recommender.update_and_retrain()
+                    
                     recommendations = recommender.get_hybrid_recommendations(
                         selected_customer,
                         product_id_viewed=None,
@@ -1279,7 +1427,9 @@ else:
     with tab3:
         st.subheader("📋 Lịch sử đánh giá của bạn")
         
-        customer_reviews = reviews_data[reviews_data['customer_id'] == selected_customer]
+        # Sử dụng hàm trợ giúp để trích xuất danh sách đánh giá thực tế
+        customer_reviews = get_explicit_reviews_for_customer(selected_customer, reviews_data)
+            
         customer_reviews_display = customer_reviews.copy()
         customer_reviews_display['product_title'] = customer_reviews_display['product_id'].map(book_dict)
         customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating']]

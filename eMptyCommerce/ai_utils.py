@@ -1,9 +1,7 @@
-"""
-Module AI Utilities - Các hàm liên quan đến Gemini API
-"""
-
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
+import os
 
 # Global cache cho model name và API Key
 _AVAILABLE_MODEL = None
@@ -95,18 +93,144 @@ def get_available_model():
     return _AVAILABLE_MODEL
 
 
+# ==================== HÀM TÌM KIẾM NGỮ CẢNH SÁCH (RAG) ====================
+def search_context_books(query_text, top_n=6):
+    """
+    Tìm kiếm các sách liên quan nhất trong cơ sở dữ liệu dựa trên câu hỏi của người dùng.
+    
+    Kết hợp:
+    1. So khớp danh mục (Category)
+    2. Khớp cụm từ trong tiêu đề (Title)
+    3. Khớp cụm từ tác giả (Authors)
+    4. Khớp từ khóa riêng lẻ
+    5. Độ tương đồng Cosine TF-IDF (từ recommender model nếu đã khởi tạo)
+    """
+    from book_data_loader import load_book_data
+    
+    df_clean = load_book_data()
+    if df_clean is None or df_clean.empty:
+        return []
+        
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    full_path = os.path.join(app_dir, 'data', 'book_data.csv')
+    
+    try:
+        if os.path.exists(full_path):
+            df_full = pd.read_csv(full_path).drop_duplicates(subset=['product_id'])
+            df = pd.merge(
+                df_clean[['product_id', 'title', 'category', 'cover_link', 'tokenized_desc']],
+                df_full[['product_id', 'authors', 'current_price', 'avg_rating']],
+                on='product_id',
+                how='left'
+            )
+        else:
+            df = df_clean.copy()
+            df['authors'] = "Nhiều tác giả"
+            df['current_price'] = 50000
+            df['avg_rating'] = 4.5
+    except Exception as e:
+        print(f"⚠️ Lỗi load/merge book data trong search_context_books: {e}")
+        df = df_clean.copy()
+        df['authors'] = "Nhiều tác giả"
+        df['current_price'] = 50000
+        df['avg_rating'] = 4.5
+
+    query_lower = query_text.lower().strip()
+    
+    # Tính điểm khớp cho từng cuốn sách
+    scores = pd.Series(0.0, index=df.index)
+    
+    # 1. Tìm theo danh mục
+    categories = df['category'].dropna().unique()
+    for cat in categories:
+        if cat.lower() in query_lower:
+            scores[df['category'] == cat] += 12.0
+            
+    # 2. Khớp cụm từ đầy đủ trong tiêu đề
+    scores[df['title'].str.lower().str.contains(query_lower, na=False)] += 15.0
+    
+    # 3. Khớp cụm từ trong tác giả
+    if 'authors' in df.columns:
+        scores[df['authors'].str.lower().str.contains(query_lower, na=False)] += 12.0
+        
+    # 4. Khớp mô tả đầy đủ
+    if 'tokenized_desc' in df.columns:
+        scores[df['tokenized_desc'].str.lower().str.contains(query_lower, na=False)] += 5.0
+        
+    # 5. Khớp các từ khóa đơn lẻ (bỏ qua stopwords tiếng Việt thông dụng)
+    keywords = [w.strip() for w in query_lower.split() if len(w.strip()) > 2]
+    vietnamese_stopwords = {
+        'sách', 'cuốn', 'những', 'của', 'một', 'tập', 'truyện', 'cho', 'này', 'tìm', 
+        'bán', 'chạy', 'hay', 'gợi', 'ý', 'tư', 'vấn', 'nào', 'đọc', 'muốn', 'thích',
+        'giới', 'thiệu', 'bạn', 'mình', 'có', 'không', 'về', 'lịch', 'sử'
+    }
+    for kw in keywords:
+        if kw in vietnamese_stopwords:
+            continue
+        scores[df['title'].str.lower().str.contains(kw, na=False)] += 2.0
+        if 'authors' in df.columns:
+            scores[df['authors'].str.lower().str.contains(kw, na=False)] += 1.5
+        if 'tokenized_desc' in df.columns:
+            scores[df['tokenized_desc'].str.lower().str.contains(kw, na=False)] += 0.5
+            
+    # 6. Sử dụng Cosine Similarity từ recommender nếu có sẵn trong session state
+    recommender_obj = None
+    if hasattr(st.session_state, '__contains__'):
+        try:
+            if 'recommender' in st.session_state:
+                recommender_obj = st.session_state.recommender
+        except:
+            pass
+    elif hasattr(st.session_state, 'recommender'):
+        recommender_obj = getattr(st.session_state, 'recommender')
+        
+    if recommender_obj is not None:
+        try:
+            rec = recommender_obj
+            if rec.tfidf_vectorizer is not None and rec.tfidf_matrix is not None:
+                from sklearn.metrics.pairwise import cosine_similarity
+                query_vec = rec.tfidf_vectorizer.transform([query_lower])
+                sim_scores = cosine_similarity(query_vec, rec.tfidf_matrix).flatten()
+                
+                if len(sim_scores) == len(df):
+                    scores += pd.Series(sim_scores, index=df.index) * 6.0
+        except Exception as e:
+            print(f"⚠️ Lỗi tính cosine similarity trong search_context_books: {e}")
+            
+    # Lọc sách có điểm khớp lớn hơn 0
+    matched_df = df[scores > 0].copy()
+    matched_df['match_score'] = scores[scores > 0]
+    
+    if not matched_df.empty:
+        matched_df = matched_df.sort_values(by='match_score', ascending=False)
+        return matched_df.head(top_n).to_dict(orient='records')
+        
+    # Fallback: Trả về sách phổ biến
+    try:
+        from book_data_loader import get_popular_books
+        pop_books = get_popular_books(limit=top_n)
+        if pop_books is not None and not pop_books.empty:
+            if os.path.exists(full_path):
+                df_full = pd.read_csv(full_path).drop_duplicates(subset=['product_id'])
+                merged_pop = pd.merge(
+                    pop_books[['product_id', 'title', 'category', 'cover_link']],
+                    df_full[['product_id', 'authors', 'current_price', 'avg_rating']],
+                    on='product_id',
+                    how='left'
+                )
+                return merged_pop.to_dict(orient='records')
+            return pop_books.to_dict(orient='records')
+    except Exception as e:
+        print(f"⚠️ Lỗi fallback get_popular_books: {e}")
+        
+    return df.head(top_n).to_dict(orient='records')
+
+
 # ==================== HÀM TRỢ LỰC AI TƯ VẤN SÁCH ====================
 def get_ai_response(user_message, chat_history, gemini_available=True):
     """
     Gửi tin nhắn tới Gemini API và nhận phản hồi từ AI Trợ lý tư vấn sách.
-    
-    Args:
-        user_message (str): Tin nhắn của người dùng
-        chat_history (list): Lịch sử trò chuyện trước đó
-        gemini_available (bool): Có sẵn API hay không
-    
-    Returns:
-        str: Phản hồi từ AI hoặc thông báo lỗi
+    Tự động tìm kiếm sách liên quan trong hệ thống để làm ngữ cảnh.
     """
     if not gemini_available:
         return "❌ Chức năng AI không khả dụng. Vui lòng kiểm tra cấu hình API Key."
@@ -117,8 +241,49 @@ def get_ai_response(user_message, chat_history, gemini_available=True):
         if not model_name:
             return "❌ Không tìm thấy model Gemini nào khả dụng. Vui lòng kiểm tra API Key."
         
-        # Khởi tạo model với system instruction
-        system_instruction = """Bạn là một Trợ lý AI Tư vấn Sách chuyên nghiệp, hoạt động độc quyền cho hệ thống eMpTyCommerce. Luôn xưng là 'mình' hoặc 'eMpTy AI' và gọi người dùng là 'bạn' một cách thân thiện. Bạn chỉ được phép trả lời, tóm tắt, gợi ý hoặc giải đáp các chủ đề liên quan đến sách, tác giả, giá tiền sách hoặc sở thích đọc sách. Nếu người dùng hỏi bất kỳ câu hỏi nào ngoài chủ đề sách (như viết code, toán học, thời tiết, chính trị...), bạn phải từ chối một cách lịch sự và khéo léo điều hướng họ quay lại chủ đề sách của cửa hàng."""
+        # 1. Tìm kiếm sách liên quan trong hệ thống
+        relevant_books = search_context_books(user_message, top_n=8)
+        
+        # 2. Xây dựng ngữ cảnh sách
+        context_str = ""
+        if relevant_books:
+            context_str = "\nCác sách có sẵn trong hệ thống cửa hàng eMpTyCommerce liên quan đến yêu cầu của khách hàng:\n"
+            for b in relevant_books:
+                authors = b.get('authors', 'Nhiều tác giả')
+                price = b.get('current_price', 50000)
+                rating = b.get('avg_rating', 5.0)
+                category = b.get('category', 'Chưa phân loại')
+                desc = b.get('tokenized_desc', '')
+                
+                desc_summary = "Không có mô tả chi tiết."
+                if pd.notna(desc) and str(desc).strip():
+                    # clean tokenized description for readability
+                    desc_summary = str(desc).replace('_', ' ')
+                    desc_summary = desc_summary[:150] + "..." if len(desc_summary) > 150 else desc_summary
+                    
+                context_str += f"- Sách: \"{b['title']}\"\n"
+                context_str += f"  * Tác giả: {authors}\n"
+                context_str += f"  * Giá bán: {int(price):,} đ\n"
+                context_str += f"  * Đánh giá: {rating:.1f}/5.0\n"
+                context_str += f"  * Thể loại: {category}\n"
+                context_str += f"  * Tóm tắt: {desc_summary}\n\n"
+        
+        # 3. Cấu hình Dynamic System Instruction
+        system_instruction = f"""Bạn là một Trợ lý AI Tư vấn Sách chuyên nghiệp, hoạt động độc quyền cho hệ thống eMpTyCommerce. 
+Luôn xưng là 'mình' hoặc 'eMpTy AI' và gọi người dùng là 'bạn' một cách thân thiện. 
+Bạn chỉ được phép trả lời, tóm tắt, gợi ý hoặc giải đáp các chủ đề liên quan đến sách, tác giả, giá tiền sách hoặc sở thích đọc sách. 
+
+DƯỚI ĐÂY LÀ DANH SÁCH SÁCH ĐANG CÓ SẴN TRONG HỆ THỐNG CỬA HÀNG eMpTyCommerce:
+{context_str}
+
+QUY TẮC PHẢN HỒI NGHIÊM NGẶT:
+1. Bạn CHỈ được phép giới thiệu, tư vấn và gợi ý các cuốn sách thực sự có trong DANH SÁCH SÁCH ĐANG CÓ SẴN ở trên. Tuyệt đối không tự bịa ra sách hoặc gợi ý sách ngoài danh sách trên.
+2. Mỗi lần tư vấn/gợi ý sách, hãy giới thiệu khoảng 3-4 cuốn sách phù hợp nhất từ danh sách trên (nếu trong danh sách trên có đủ) để người dùng có nhiều sự lựa chọn. Không giới thiệu duy nhất một cuốn trừ khi danh sách trên chỉ có một cuốn khớp.
+3. Khi nhắc đến tên sách, bạn BẮT BUỘC phải đặt tên sách chính xác 100% trong dấu ngoặc kép đôi, ví dụ: "Cây Cam Ngọt Của Tôi". Điều này rất quan trọng để hệ thống lập tức hiển thị ảnh bìa của sách.
+4. Nếu người dùng chỉ chào hỏi hoặc hỏi thăm thông thường (ví dụ: "xin chào", "hello", "bạn là ai"), hãy chào lại thân thiện, tự giới thiệu mình là eMpTy AI và hỏi nhu cầu đọc sách của họ một cách lịch sự, KHÔNG gợi ý sách ngay lập tức trừ khi được yêu cầu.
+5. Nếu người dùng hỏi bất kỳ câu hỏi nào ngoài chủ đề sách (như viết code, toán học, thời tiết, chính trị...), bạn phải từ chối một cách lịch sự và khéo léo điều hướng họ quay lại chủ đề sách của cửa hàng.
+6. Câu trả lời cần ngắn gọn, tập trung, mang tính chất tư vấn bán hàng chuyên nghiệp và thân thiện.
+"""
         
         model = genai.GenerativeModel(
             model_name=model_name,
