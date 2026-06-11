@@ -353,14 +353,23 @@ def get_cart_items(cart_id: int) -> pd.DataFrame:
             if not items:
                 return pd.DataFrame()
             
+            # Function to normalize product_id: string format, stripped, and remove leading zeros for numeric IDs
+            def normalize_id(pid):
+                pid_str = str(pid).strip()
+                if pid_str.isdigit():
+                    return str(int(pid_str))
+                return pid_str
+
             # Chuyển thành DataFrame
             df = pd.DataFrame([dict(item) for item in items])
+            df['product_id'] = df['product_id'].apply(normalize_id)
             
             # Load dữ liệu sách từ CSV (sử dụng book_data.csv để lấy giá current_price)
             book_data_path = os.path.join(APP_DIR, 'data', 'book_data.csv')
             if os.path.exists(book_data_path):
                 book_data = pd.read_csv(book_data_path)
                 book_data = book_data.drop_duplicates(subset=['product_id'], keep='first')
+                book_data['product_id'] = book_data['product_id'].apply(normalize_id)
                 # Chuyển đổi current_price thành kiểu số nguyên nếu cần (mặc định 50000 nếu NaN)
                 book_data['current_price'] = book_data['current_price'].fillna(50000).astype(int)
                 # Join với dữ liệu sách để lấy title, category, cover_link, current_price
@@ -375,12 +384,26 @@ def get_cart_items(cart_id: int) -> pd.DataFrame:
                 if os.path.exists(clean_path):
                     book_data = pd.read_csv(clean_path)
                     book_data = book_data.drop_duplicates(subset=['product_id'], keep='first')
+                    book_data['product_id'] = book_data['product_id'].apply(normalize_id)
                     book_data['current_price'] = 50000
                     df = df.merge(
                         book_data[['product_id', 'title', 'category', 'cover_link', 'current_price']],
                         on='product_id',
                         how='left'
                     )
+
+            # Đảm bảo các cột không có giá trị NaN sau khi merge (chống lỗi float NaN trong UI)
+            if not df.empty:
+                for col in ['title', 'category', 'cover_link']:
+                    if col in df.columns:
+                        df[col] = df[col].fillna("Sản phẩm không tên" if col == 'title' else ("Chưa phân loại" if col == 'category' else ""))
+                    else:
+                        df[col] = "Sản phẩm không tên" if col == 'title' else ("Chưa phân loại" if col == 'category' else "")
+                
+                if 'current_price' in df.columns:
+                    df['current_price'] = df['current_price'].fillna(50000).astype(int)
+                else:
+                    df['current_price'] = 50000
             
             return df
             
@@ -484,6 +507,12 @@ def merge_cart(session_id: str, customer_id: int) -> bool:
                         VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ''', (main_cart_id, product_id, quantity))
                     print(f"  → Copy sản phẩm: product_id={product_id}, quantity={quantity}")
+                
+                # Ghi nhận tương tác ADD_TO_CART cho khách hàng khi hợp nhất giỏ hàng
+                cursor.execute('''
+                    INSERT OR REPLACE INTO User_Interactions (customer_id, product_id, interaction_type, rating)
+                    VALUES (?, ?, 'ADD_TO_CART', 3.0)
+                ''', (customer_id, product_id))
                 
                 merged_count += 1
             
@@ -892,7 +921,7 @@ def get_customer_orders(customer_id: Optional[int] = None, session_id: Optional[
                     item_dict['cover_link'] = ""
                     
                     if not book_df.empty:
-                        matched = book_df[book_df['product_id'] == item_dict['product_id']]
+                        matched = book_df[book_df['product_id'].astype(str).str.strip() == str(item_dict['product_id']).strip()]
                         if not matched.empty:
                             row = matched.iloc[0]
                             item_dict['title'] = str(row.get('title', item_dict['title']))
@@ -949,7 +978,7 @@ def get_all_user_interactions() -> pd.DataFrame:
             df = pd.DataFrame([dict(row) for row in rows])
             # Ép kiểu dữ liệu an toàn: chuyển chuỗi số thành int, giữ nguyên nếu có chữ cái (u_xxxx)
             df['customer_id'] = df['customer_id'].apply(lambda x: int(x) if str(x).isdigit() else str(x))
-            df['product_id'] = df['product_id'].apply(lambda x: int(x) if str(x).isdigit() else str(x))
+            df['product_id'] = df['product_id'].astype(str).str.strip()
             df['rating'] = df['rating'].astype(float)
             return df
     except Exception as e:

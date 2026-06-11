@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Kịch bản cào dữ liệu (Web Scraper) Thế Giới Di Động (thegioididong.com)
-Phục vụ cho đề tài luận văn: "Hệ thống gợi ý sản phẩm thương mại điện tử dựa trên mô hình Hybrid"
-Thu thập 2 bảng dữ liệu:
+Kịch bản cào dữ liệu (Web Scraper) FPT Shop (fptshop.com.vn)
+Thu thập và bổ sung dữ liệu cho hệ thống gợi ý Hybrid
+Cấu trúc đầu ra đồng bộ 100% với Thế Giới Di Động:
 1. products.csv: product_id, title, category, price, description, image_url, brand, specs
 2. reviews.csv: review_id, user_id, product_id, rating, review_text, date
 """
@@ -19,39 +19,30 @@ import argparse
 import requests
 import urllib.parse
 from bs4 import BeautifulSoup
+from datetime import datetime
 
-# Cấu hình Headers mặc định để giả lập trình duyệt và tránh bị chặn
+# Cấu hình Headers đơn giản để tránh lỗi nén Brotli (br)
 DEFAULT_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Cache-Control': 'max-age=0',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 }
 
-class TGDDScraper:
+class FPTScraper:
     def __init__(self, delay=1.5, output_dir='data'):
         self.delay = delay
         self.output_dir = output_dir
         self.headers = DEFAULT_HEADERS
         
-        # Đảm bảo thư mục đầu ra tồn tại
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
             print(f"[*] Đã tạo thư mục đầu ra: {self.output_dir}")
 
     def sleep(self, custom_delay=None):
-        """Tạm dừng giữa các request để lịch sự và tránh bị block"""
         time.sleep(custom_delay if custom_delay is not None else self.delay)
 
     def get_product_links_from_category(self, category_name, category_urls, max_products=100):
-        """
-        Lấy danh sách link chi tiết sản phẩm từ danh sách các trang danh mục & thương hiệu
-        """
         links = []
         for url in category_urls:
-            print(f"[+] Đang quét lấy liên kết cho '{category_name}' từ: {url}...")
+            print(f"[+] Đang quét lấy liên kết cho '{category_name}' từ FPT Shop: {url}...")
             try:
                 res = requests.get(url, headers=self.headers, timeout=15)
                 if res.status_code != 200:
@@ -63,66 +54,60 @@ class TGDDScraper:
                 
                 for a in soup.find_all('a', href=True):
                     href = a['href']
-                    # Xác định các liên kết sản phẩm dựa trên danh mục tương ứng
                     is_valid_link = False
-                    if category_name == 'Điện thoại' and '/dtdd/' in href:
+                    
+                    # Xác định link dựa trên danh mục
+                    if category_name == 'Điện thoại' and '/dien-thoai/' in href:
                         is_valid_link = True
-                    elif category_name == 'Laptop' and '/laptop/' in href:
+                    elif category_name == 'Laptop' and ('/may-tinh-xach-tay/' in href or '/laptop/' in href):
                         is_valid_link = True
                     elif category_name == 'Máy tính bảng' and '/may-tinh-bang/' in href:
                         is_valid_link = True
-                    elif category_name == 'Đồng hồ' and any(kw in href for kw in ['/dong-ho-thong-minh/', '/dong-ho-deo-tay/']):
+                    elif category_name == 'Đồng hồ' and ('/smartwatch/' in href or '/dong-ho-thong-minh/' in href):
                         is_valid_link = True
-                    elif category_name == 'Âm thanh' and any(kw in href for kw in ['/tai-nghe/', '/loa/', '/loa-laptop/']):
+                    elif category_name == 'Âm thanh' and any(kw in href for kw in ['/tai-nghe', '/loa', '/phu-kien/tai-nghe', '/phu-kien/loa']):
                         is_valid_link = True
                     elif category_name == 'Phụ kiện' and any(kw in href for kw in [
-                        '/loa-laptop/', '/sac-dtdd/', '/camera-giam-sat/', '/tai-nghe/', 
-                        '/chuot-ban-phim/', '/ban-phim/', '/chuot/', '/op-lung-', 
-                        '/mieng-dan-man-hinh/', '/cap-dien-thoai/', '/pin-sac-du-phong/', 
-                        '/the-nho-dien-thoai/', '/usb/', '/o-cung-di-dong/', '/balo-tui-chong-soc/',
-                        '/gia-do-dien-thoai/', '/phu-kien-apple/', '/phu-kien-di-dong/'
+                        '/phu-kien/', '/op-lung/', '/sac-du-phong/', '/sac-cap/', 
+                        '/chuot/', '/ban-phim/', '/balo-tui-xach/', '/the-nho-usb/'
                     ]):
                         is_valid_link = True
                     
                     if is_valid_link:
                         # Chuyển đổi thành URL tuyệt đối
-                        full_url = urllib.parse.urljoin('https://www.thegioididong.com', href)
-                        # Bỏ các tham số UTM hoặc query
+                        full_url = urllib.parse.urljoin('https://fptshop.com.vn', href)
                         cleaned_url = full_url.split('?')[0]
                         if cleaned_url not in links:
                             links.append(cleaned_url)
                             page_links_count += 1
                 
                 print(f"    [v] Quét xong trang: Thu được {page_links_count} liên kết mới.")
-                # Tạm nghỉ ngắn giữa các trang danh mục để an toàn
                 self.sleep(0.5)
                 
             except Exception as e:
                 print(f"    [!] Đã xảy ra lỗi khi lấy danh sách sản phẩm từ {url}: {e}")
             
-        # Lọc bớt các link rác
+        # Lọc bớt các link rác (danh mục chính)
         filtered_links = []
         for link in links:
             slug = link.split('/')[-1]
             if slug and slug not in [
-                'dtdd', 'laptop', 'may-tinh-bang', 'dong-ho-thong-minh', 'dong-ho-deo-tay', 
-                'tai-nghe', 'loa', 'phu-kien', 'cap-dien-thoai', 'chuot-ban-phim', 'tin-tuc', 
-                'so-sanh', 'chinh-sach', 'pin-sac-du-phong', 'sac-dtdd', 'op-lung-flipcover', 
-                'chuot', 'ban-phim', 'mieng-dan-man-hinh', 'the-nho-dien-thoai', 'usb', 
-                'o-cung-di-dong', 'balo-tui-chong-soc', 'phu-kien-di-dong', 'thiet-bi-nha-thong-minh', 
-                'camera-giam-sat'
+                'dien-thoai', 'may-tinh-xach-tay', 'may-tinh-bang', 'smartwatch', 'phu-kien', 
+                'apple-iphone', 'samsung', 'oppo', 'xiaomi', 'honor', 'realme', 'vivo', 'tecno', 
+                'apple-macbook', 'asus', 'hp', 'lenovo', 'acer', 'dell', 'msi', 'gigabyte',
+                'apple-ipad', 'masstel', 'kindle', 'huawei', 'apple', 'garmin', 'amazfit', 
+                'kidcare', 'tai-nghe', 'loa', 'bao-da-op-lung', 'sac-du-phong', 'sac-cap', 
+                'chuot', 'ban-phim', 'balo-tui-xach', 'the-nho-usb', 'dien-thoai-5g', 'ai', 
+                'dien-thoai-gap', 'dien-thoai-gaming', 'pho-thong'
             ]:
                 filtered_links.append(link)
         
-        print(f"[*] Tìm thấy tổng cộng {len(filtered_links)} sản phẩm duy nhất cho danh mục '{category_name}'.")
+        print(f"[*] Tìm thấy tổng cộng {len(filtered_links)} sản phẩm FPT Shop duy nhất cho '{category_name}'.")
         print(f"[*] Lấy tối đa {max_products} sản phẩm để tiến hành cào chi tiết.")
         return filtered_links[:max_products]
 
     def scrape_product_details(self, product_url, category_name):
-        """
-        Scrape thông tin chi tiết và đánh giá từ trang sản phẩm qua JSON-LD
-        """
-        print(f"  -> Đang cào dữ liệu từ: {product_url}")
+        print(f"  -> Đang cào dữ liệu từ FPT Shop: {product_url}")
         try:
             res = requests.get(product_url, headers=self.headers, timeout=15)
             if res.status_code != 200:
@@ -130,8 +115,6 @@ class TGDDScraper:
                 return None, []
             
             soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # 1. Tìm script chứa JSON-LD của Product
             ld_scripts = soup.find_all('script', type='application/ld+json')
             product_data = None
             
@@ -154,14 +137,12 @@ class TGDDScraper:
                 print("    [!] Không tìm thấy cấu trúc JSON-LD Product trên trang này.")
                 return None, []
             
-            # 2. Trích xuất thông tin sản phẩm
+            # Trích xuất thông tin sản phẩm
             product_id = product_data.get('sku')
             if not product_id:
-                # Nếu thiếu SKU, tạo ID từ slug URL
                 slug = product_url.split('/')[-1]
                 product_id = hashlib.md5(slug.encode('utf-8')).hexdigest()[:8]
             
-            # Trích xuất và chuẩn hóa dữ liệu
             title = product_data.get('name') or soup.find('h1').text.strip() if soup.find('h1') else 'Sản phẩm không tên'
             
             # Trích xuất giá
@@ -197,20 +178,17 @@ class TGDDScraper:
             brand = ''
             brand_data = product_data.get('brand')
             if isinstance(brand_data, dict):
-                name_val = brand_data.get('name', '')
-                brand = name_val[0] if isinstance(name_val, list) and name_val else str(name_val)
+                brand = brand_data.get('name', '')
             elif isinstance(brand_data, str):
                 brand = brand_data
             
-            # Chuẩn hóa thương hiệu
             brand = brand.strip()
             if not brand:
-                # Trích xuất thương hiệu từ tiêu đề
-                for b_name in ['Apple', 'Samsung', 'OPPO', 'Xiaomi', 'vivo', 'realme', 'Asus', 'HP', 'Acer', 'Lenovo', 'Dell', 'MSI', 'Masstel', 'iPad', 'Huawei', 'Garmin', 'Sony', 'JBL', 'Sennheiser']:
+                for b_name in ['Apple', 'Samsung', 'OPPO', 'Xiaomi', 'vivo', 'realme', 'Asus', 'HP', 'Acer', 'Lenovo', 'Dell', 'MSI', 'Masstel', 'iPad', 'Huawei', 'Garmin', 'Sony', 'JBL', 'Sennheiser', 'Razer', 'Logitech', 'Dareu']:
                     if b_name.lower() in title.lower():
                         brand = b_name
                         break
-            if 'iPhone' in brand or 'iPad' in brand or 'Apple' in brand:
+            if 'iPhone' in brand or 'iPad' in brand or 'Apple' in brand or 'MacBook' in brand:
                 brand = 'Apple'
             
             # Trích xuất thông số kỹ thuật (specs)
@@ -233,7 +211,7 @@ class TGDDScraper:
                 'specs': specs
             }
             
-            # 3. Trích xuất bình luận/đánh giá
+            # Trích xuất bình luận/đánh giá
             reviews = []
             raw_reviews = product_data.get('review') or []
             if isinstance(raw_reviews, dict):
@@ -243,7 +221,6 @@ class TGDDScraper:
                 if not isinstance(rev, dict):
                     continue
                 
-                # Trích xuất tên người dùng
                 author_name = ''
                 author_data = rev.get('author')
                 if isinstance(author_data, dict):
@@ -252,17 +229,15 @@ class TGDDScraper:
                     author_name = author_data
                 author_name = author_name.strip() or 'Khách hàng ẩn danh'
                 
-                # Tạo user_id duy nhất dạng hash
                 user_id = f"u_{hashlib.md5(author_name.encode('utf-8')).hexdigest()[:8]}"
                 
-                review_text = rev.get('reviewBody') or rev.get('description') or ''
+                # FPT Shop review có thể không có text nội dung, ta sẽ điền mặc định để tránh trống trải
+                review_text = rev.get('reviewBody') or rev.get('description') or 'Khách hàng không để lại ý kiến.'
                 review_text = review_text.strip()
                 
-                # Tạo review_id duy nhất
                 content_hash = hashlib.md5(f"{author_name}_{review_text}".encode('utf-8')).hexdigest()[:8]
                 review_id = f"r_{product_id}_{content_hash}"
                 
-                # Trích xuất số sao đánh giá (rating)
                 rating = 5
                 rating_data = rev.get('reviewRating')
                 if isinstance(rating_data, dict):
@@ -271,10 +246,9 @@ class TGDDScraper:
                     except:
                         rating = 5
                 
-                # Trích xuất ngày đánh giá
                 raw_date = rev.get('datePublished') or ''
-                date = raw_date.split(': ')[0] if ': ' in raw_date else raw_date
-                date = date.strip()
+                date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
+                date = date.strip() or datetime.now().strftime('%Y-%m-%d')
                 
                 reviews.append({
                     'review_id': review_id,
@@ -285,68 +259,57 @@ class TGDDScraper:
                     'date': date
                 })
                 
-            print(f"    [v] Thành công: Lấy được thông tin sản phẩm và {len(reviews)} đánh giá.")
+            print(f"    [v] Thành công: Lấy được thông tin sản phẩm và {len(reviews)} đánh giá từ FPT Shop.")
             return product_info, reviews
             
         except Exception as e:
-            print(f"    [!] Lỗi khi cào chi tiết sản phẩm: {e}")
+            print(f"    [!] Lỗi khi cào chi tiết sản phẩm từ FPT Shop: {e}")
             return None, []
 
     def run(self, max_products_per_cat=100, target_category=None):
-        """
-        Hàm điều khiển toàn bộ tiến trình cào dữ liệu
-        """
-        # Thêm danh mục Đồng hồ thông minh và Âm thanh để nhân rộng lượng dữ liệu
         categories = {
             'Điện thoại': [
-                'https://www.thegioididong.com/dtdd',
-                'https://www.thegioididong.com/dtdd-samsung',
-                'https://www.thegioididong.com/dtdd-oppo',
-                'https://www.thegioididong.com/dtdd-xiaomi',
-                'https://www.thegioididong.com/dtdd-vivo',
-                'https://www.thegioididong.com/dtdd-realme'
+                'https://fptshop.com.vn/dien-thoai',
+                'https://fptshop.com.vn/dien-thoai/apple-iphone',
+                'https://fptshop.com.vn/dien-thoai/samsung',
+                'https://fptshop.com.vn/dien-thoai/oppo',
+                'https://fptshop.com.vn/dien-thoai/xiaomi',
+                'https://fptshop.com.vn/dien-thoai/honor'
             ],
             'Laptop': [
-                'https://www.thegioididong.com/laptop',
-                'https://www.thegioididong.com/laptop-asus',
-                'https://www.thegioididong.com/laptop-hp',
-                'https://www.thegioididong.com/laptop-lenovo',
-                'https://www.thegioididong.com/laptop-acer',
-                'https://www.thegioididong.com/laptop-dell',
-                'https://www.thegioididong.com/laptop-msi'
+                'https://fptshop.com.vn/may-tinh-xach-tay',
+                'https://fptshop.com.vn/may-tinh-xach-tay/apple-macbook',
+                'https://fptshop.com.vn/may-tinh-xach-tay/asus',
+                'https://fptshop.com.vn/may-tinh-xach-tay/hp',
+                'https://fptshop.com.vn/may-tinh-xach-tay/lenovo',
+                'https://fptshop.com.vn/may-tinh-xach-tay/acer',
+                'https://fptshop.com.vn/may-tinh-xach-tay/dell'
             ],
             'Máy tính bảng': [
-                'https://www.thegioididong.com/may-tinh-bang',
-                'https://www.thegioididong.com/may-tinh-bang-apple-ipad',
-                'https://www.thegioididong.com/may-tinh-bang-samsung',
-                'https://www.thegioididong.com/may-tinh-bang-xiaomi',
-                'https://www.thegioididong.com/may-tinh-bang-lenovo',
-                'https://www.thegioididong.com/may-tinh-bang-masstel'
+                'https://fptshop.com.vn/may-tinh-bang',
+                'https://fptshop.com.vn/may-tinh-bang/apple-ipad',
+                'https://fptshop.com.vn/may-tinh-bang/samsung',
+                'https://fptshop.com.vn/may-tinh-bang/xiaomi'
             ],
             'Đồng hồ': [
-                'https://www.thegioididong.com/dong-ho-thong-minh',
-                'https://www.thegioididong.com/dong-ho-thong-minh-apple',
-                'https://www.thegioididong.com/dong-ho-thong-minh-samsung',
-                'https://www.thegioididong.com/dong-ho-thong-minh-xiaomi',
-                'https://www.thegioididong.com/dong-ho-thong-minh-realme',
-                'https://www.thegioididong.com/dong-ho-deo-tay'
+                'https://fptshop.com.vn/smartwatch',
+                'https://fptshop.com.vn/smartwatch/apple',
+                'https://fptshop.com.vn/smartwatch/samsung',
+                'https://fptshop.com.vn/smartwatch/xiaomi'
             ],
             'Âm thanh': [
-                'https://www.thegioididong.com/tai-nghe',
-                'https://www.thegioididong.com/loa'
+                'https://fptshop.com.vn/phu-kien/tai-nghe',
+                'https://fptshop.com.vn/phu-kien/loa'
             ],
             'Phụ kiện': [
-                'https://www.thegioididong.com/phu-kien',
-                'https://www.thegioididong.com/cap-dien-thoai',
-                'https://www.thegioididong.com/chuot-ban-phim',
-                'https://www.thegioididong.com/pin-sac-du-phong',
-                'https://www.thegioididong.com/sac-dtdd',
-                'https://www.thegioididong.com/op-lung-flipcover',
-                'https://www.thegioididong.com/chuot',
-                'https://www.thegioididong.com/ban-phim',
-                'https://www.thegioididong.com/mieng-dan-man-hinh',
-                'https://www.thegioididong.com/the-nho-dien-thoai',
-                'https://www.thegioididong.com/camera-giam-sat'
+                'https://fptshop.com.vn/phu-kien',
+                'https://fptshop.com.vn/phu-kien/bao-da-op-lung',
+                'https://fptshop.com.vn/phu-kien/sac-du-phong',
+                'https://fptshop.com.vn/phu-kien/sac-cap',
+                'https://fptshop.com.vn/phu-kien/chuot',
+                'https://fptshop.com.vn/phu-kien/ban-phim',
+                'https://fptshop.com.vn/phu-kien/balo-tui-xach',
+                'https://fptshop.com.vn/phu-kien/the-nho-usb'
             ]
         }
         
@@ -354,7 +317,7 @@ class TGDDScraper:
         all_reviews = []
         
         print("="*60)
-        print(" BẮT ĐẦU CÀO DỮ LIỆU THẾ GIỚI DI ĐỘNG (THEGIOIDIDONG.COM)")
+        print(" BẮT ĐẦU CÀO DỮ LIỆU FPT SHOP (FPTSHOP.COM.VN)")
         print(f" - Số lượng sản phẩm yêu cầu tối đa/danh mục: {max_products_per_cat}")
         if target_category:
             print(f" - Danh mục mục tiêu: {target_category}")
@@ -373,15 +336,13 @@ class TGDDScraper:
                     all_products.append(prod_info)
                     all_reviews.extend(prod_reviews)
                 
-                # Tạm nghỉ để bảo mật/lịch sự
                 self.sleep()
         
-        # Lưu trữ dữ liệu vào CSV
         self.save_products(all_products)
         self.save_reviews(all_reviews)
         
         print("\n" + "="*60)
-        print(" HOÀN THÀNH TIẾN TRÌNH CÀO DỮ LIỆU!")
+        print(" HOÀN THÀNH TIẾN TRÌNH CÀO DỮ LIỆU FPT SHOP!")
         print(f" - Tổng số sản phẩm thu được: {len(all_products)}")
         print(f" - Tổng số đánh giá thu được: {len(all_reviews)}")
         print(f" - File sản phẩm: {os.path.join(self.output_dir, 'products.csv')}")
@@ -389,12 +350,10 @@ class TGDDScraper:
         print("="*60)
 
     def save_products(self, products):
-        """Lưu danh sách sản phẩm vào file products.csv (chế độ cộng dồn và loại bỏ trùng lặp)"""
         file_path = os.path.join(self.output_dir, 'products.csv')
         headers = ['product_id', 'title', 'category', 'price', 'description', 'image_url', 'brand', 'specs']
         
         existing_products = {}
-        # Đọc dữ liệu cũ nếu file đã tồn tại
         if os.path.exists(file_path):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -405,7 +364,6 @@ class TGDDScraper:
             except Exception as e:
                 print(f"[!] Không thể đọc dữ liệu products.csv cũ: {e}")
         
-        # Ghi đè/Cập nhật bằng sản phẩm mới cào
         new_count = 0
         for prod in products:
             pid = prod.get('product_id')
@@ -420,17 +378,15 @@ class TGDDScraper:
                 writer.writeheader()
                 for prod_id, prod_data in existing_products.items():
                     writer.writerow(prod_data)
-            print(f"[v] Đã cập nhật products.csv thành công. Số sản phẩm mới thêm: {new_count}. Tổng số hiện tại: {len(existing_products)}")
+            print(f"[v] Đã cập nhật products.csv thành công. Số sản phẩm mới FPT thêm: {new_count}. Tổng số hiện tại: {len(existing_products)}")
         except Exception as e:
             print(f"[!] Lỗi khi lưu file products.csv: {e}")
 
     def save_reviews(self, reviews):
-        """Lưu danh sách đánh giá vào file reviews.csv (chế độ cộng dồn và loại bỏ trùng lặp)"""
         file_path = os.path.join(self.output_dir, 'reviews.csv')
         headers = ['review_id', 'user_id', 'product_id', 'rating', 'review_text', 'date']
         
         existing_reviews = {}
-        # Đọc dữ liệu cũ nếu file đã tồn tại
         if os.path.exists(file_path):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -441,7 +397,6 @@ class TGDDScraper:
             except Exception as e:
                 print(f"[!] Không thể đọc dữ liệu reviews.csv cũ: {e}")
                 
-        # Ghi đè/Cập nhật bằng đánh giá mới cào
         new_count = 0
         for rev in reviews:
             rid = rev.get('review_id')
@@ -456,12 +411,12 @@ class TGDDScraper:
                 writer.writeheader()
                 for rev_id, rev_data in existing_reviews.items():
                     writer.writerow(rev_data)
-            print(f"[v] Đã cập nhật reviews.csv thành công. Số đánh giá mới thêm: {new_count}. Tổng số hiện tại: {len(existing_reviews)}")
+            print(f"[v] Đã cập nhật reviews.csv thành công. Số đánh giá mới FPT thêm: {new_count}. Tổng số hiện tại: {len(existing_reviews)}")
         except Exception as e:
             print(f"[!] Lỗi khi lưu file reviews.csv: {e}")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Cào dữ liệu Thế Giới Di Động cho Luận Văn Hệ thống Gợi ý")
+    parser = argparse.ArgumentParser(description="Cào dữ liệu FPT Shop cho Luận Văn Hệ thống Gợi ý")
     parser.add_argument('--max-products', type=int, default=100, help='Số lượng sản phẩm tối đa trên mỗi danh mục (Mặc định: 100)')
     parser.add_argument('--delay', type=float, default=1.5, help='Thời gian chờ giữa các request bằng giây (Mặc định: 1.5)')
     parser.add_argument('--output-dir', type=str, default='data', help='Thư mục lưu trữ các file CSV kết quả (Mặc định: data)')
@@ -469,5 +424,5 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    scraper = TGDDScraper(delay=args.delay, output_dir=args.output_dir)
+    scraper = FPTScraper(delay=args.delay, output_dir=args.output_dir)
     scraper.run(max_products_per_cat=args.max_products, target_category=args.category)

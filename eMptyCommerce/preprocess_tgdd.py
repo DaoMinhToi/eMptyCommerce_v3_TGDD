@@ -148,18 +148,16 @@ def preprocess_products(products_in_reviews, df_reviews_raw):
     df_renamed = df.rename(columns={'image_url': 'cover_link', 'price': 'current_price'})
     
     df_book_data = df_renamed[['product_id', 'title', 'category', 'cover_link', 'current_price', 'n_review', 'avg_rating']].copy()
-    # Chỉ giữ lại sản phẩm có đánh giá trong clean_reviews.csv để tránh phân rã mô hình
-    df_book_data_filtered = df_book_data[df_book_data['product_id'].isin(products_in_reviews)]
-    df_book_data_filtered.to_csv(book_data_path, index=False)
-    print(f"✓ Đã lưu {len(df_book_data_filtered)} sản phẩm đầy đủ vào: {book_data_path}")
+    # Giữ lại toàn bộ sản phẩm để hiển thị đầy đủ trên giao diện cửa hàng và hỗ trợ Cold-Start
+    df_book_data.to_csv(book_data_path, index=False)
+    print(f"✓ Đã lưu {len(df_book_data)} sản phẩm đầy đủ vào: {book_data_path}")
     
     # 6. Lưu ra file data/clean_book_data.csv (Dùng cho Content-Based TF-IDF)
     df_clean_books = df_renamed[['product_id', 'title', 'category', 'cover_link', 'tokenized_desc']].copy()
-    df_clean_books_filtered = df_clean_books[df_clean_books['product_id'].isin(products_in_reviews)]
-    df_clean_books_filtered.to_csv(clean_book_path, index=False)
-    print(f"✓ Đã lưu {len(df_clean_books_filtered)} sản phẩm NLP sạch vào: {clean_book_path}")
+    df_clean_books.to_csv(clean_book_path, index=False)
+    print(f"✓ Đã lưu {len(df_clean_books)} sản phẩm NLP sạch vào: {clean_book_path}")
     
-    return df_book_data_filtered
+    return df_book_data
 
 def print_summary(df_reviews, df_products):
     """In ra tóm tắt báo cáo xử lý dữ liệu"""

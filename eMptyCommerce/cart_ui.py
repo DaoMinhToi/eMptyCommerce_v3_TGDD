@@ -14,6 +14,11 @@ from db_utils import (
     generate_order_id, get_customer_orders
 )
 
+def safe_pid(pid):
+    if pid is None:
+        return None
+    return str(pid).strip()
+
 
 def render_cart_header(cart_id: int):
     """
@@ -84,7 +89,7 @@ def render_cart_items_expandable(cart_id: int):
         st.session_state.selected_cart_items = {}
         
     for _, row in items_df.iterrows():
-        pid = int(row['product_id'])
+        pid = safe_pid(row['product_id'])
         if pid not in st.session_state.selected_cart_items:
             st.session_state.selected_cart_items[pid] = True
             
@@ -92,18 +97,18 @@ def render_cart_items_expandable(cart_id: int):
     def toggle_all_items():
         val = st.session_state.select_all_cart_items
         for _, r in items_df.iterrows():
-            p_id = int(r['product_id'])
+            p_id = safe_pid(r['product_id'])
             st.session_state.selected_cart_items[p_id] = val
             st.session_state[f"select_{p_id}"] = val
 
     # Định nghĩa callback khi chọn từng sản phẩm
-    def on_item_change(p_id: int):
+    def on_item_change(p_id):
         st.session_state.selected_cart_items[p_id] = st.session_state[f"select_{p_id}"]
             
     # Checkbox chọn tất cả
     col_all_select, col_all_label = st.columns([1, 15])
     with col_all_select:
-        all_selected = all(st.session_state.selected_cart_items.get(int(row['product_id']), True) for _, row in items_df.iterrows())
+        all_selected = all(st.session_state.selected_cart_items.get(safe_pid(row['product_id']), True) for _, row in items_df.iterrows())
         st.session_state.select_all_cart_items = all_selected
         st.checkbox(
             "Chọn tất cả",
@@ -117,7 +122,7 @@ def render_cart_items_expandable(cart_id: int):
     st.write("### Chi tiết sản phẩm")
     
     for idx, item in items_df.iterrows():
-        pid = int(item['product_id'])
+        pid = safe_pid(item['product_id'])
         col_select, col_exp = st.columns([1, 15])
         
         with col_select:
@@ -137,7 +142,9 @@ def render_cart_items_expandable(cart_id: int):
             )
             
         with col_exp:
-            price = int(item.get('current_price', 50000))
+            # Safe conversion of current_price to integer, handling potential NaN or None values
+            raw_price = item.get('current_price')
+            price = int(raw_price) if (raw_price is not None and pd.notna(raw_price)) else 50000
             qty = int(item['quantity'])
             with st.expander(f"📱 {item['title']}"):
                 col1, col2, col3 = st.columns([2, 1, 1])
@@ -317,7 +324,7 @@ def record_purchase_and_retrain(customer_id: Optional[int], items_df: pd.DataFra
     try:
         from db_utils import add_user_interaction
         for _, row in items_df.iterrows():
-            product_id = int(row['product_id'])
+            product_id = safe_pid(row['product_id'])
             add_user_interaction(customer_id, product_id, 'PURCHASE', 5.0)
             
         recommender_instance = st.session_state.get('recommender')
@@ -479,7 +486,7 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                     items_list = []
                     for _, row in items_df.iterrows():
                         items_list.append({
-                            'product_id': int(row['product_id']),
+                            'product_id': safe_pid(row['product_id']),
                             'quantity': int(row['quantity']),
                             'current_price': int(row['current_price'])
                         })
@@ -503,7 +510,7 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                         # Dọn dẹp trạng thái chọn trong session state
                         selected_cart_items = st.session_state.get("selected_cart_items", {})
                         for _, row in items_df.iterrows():
-                            pid = int(row['product_id'])
+                            pid = safe_pid(row['product_id'])
                             if pid in selected_cart_items:
                                 del selected_cart_items[pid]
                         # Ghi nhận tương tác PURCHASE và tự động học gợi ý
@@ -528,7 +535,7 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                 items_list = []
                 for _, row in items_df.iterrows():
                     items_list.append({
-                        'product_id': int(row['product_id']),
+                        'product_id': safe_pid(row['product_id']),
                         'quantity': int(row['quantity']),
                         'current_price': int(row['current_price'])
                     })
@@ -605,7 +612,7 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                     # Dọn dẹp trạng thái chọn trong session state
                     selected_cart_items = st.session_state.get("selected_cart_items", {})
                     for _, row in items_df.iterrows():
-                        pid = int(row['product_id'])
+                        pid = safe_pid(row['product_id'])
                         if pid in selected_cart_items:
                             del selected_cart_items[pid]
                     # Ghi nhận tương tác PURCHASE và tự động học gợi ý
@@ -642,7 +649,7 @@ def render_checkout_page(cart_id: int, book_data: pd.DataFrame):
                         # Dọn dẹp trạng thái chọn trong session state
                         selected_cart_items = st.session_state.get("selected_cart_items", {})
                         for _, row in items_df.iterrows():
-                            pid = int(row['product_id'])
+                            pid = safe_pid(row['product_id'])
                             if pid in selected_cart_items:
                                 del selected_cart_items[pid]
                         # Ghi nhận tương tác PURCHASE và tự động học gợi ý
@@ -753,7 +760,7 @@ def render_purchase_history_page(customer_id: Optional[int], session_id: Optiona
                     if customer_id is not None:
                         # Chỉ cho phép đánh giá nếu đơn hàng đã được thanh toán (Paid) hoặc là đơn COD
                         if status == 'Paid' or method == 'COD':
-                            pid = int(item['product_id'])
+                            pid = safe_pid(item['product_id'])
                             # Lấy đánh giá hiện tại nếu có trong DB
                             current_val = 5.0
                             try:

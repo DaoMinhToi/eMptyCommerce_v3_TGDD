@@ -101,8 +101,8 @@ if 'messages' not in st.session_state:
 
 # Ghi nhận ID khách hàng hiện tại để detect khi người dùng thay đổi
 if 'current_customer_id' not in st.session_state:
-    if saved_customer_id and str(saved_customer_id).isdigit():
-        st.session_state.current_customer_id = int(saved_customer_id)
+    if saved_customer_id:
+        st.session_state.current_customer_id = int(saved_customer_id) if str(saved_customer_id).isdigit() else saved_customer_id
     else:
         st.session_state.current_customer_id = None
 
@@ -268,7 +268,7 @@ def get_book_reviews_data(book_id) -> list[dict]:
 
 
 
-
+#Thuật toán gợi ý theo độ phổ biến (Popularity-Based với Bayesian Average)
 @st.cache_data
 def get_bestseller(top_n=10):
     """
@@ -327,6 +327,7 @@ def get_explicit_reviews_for_customer(customer_id, reviews_df):
     # 1. Lấy đánh giá lịch sử từ file clean_reviews.csv
     base_reviews = reviews_df[reviews_df['customer_id'] == customer_id].copy() if reviews_df is not None else pd.DataFrame()
     base_reviews['source'] = 'history'
+    base_reviews['timestamp'] = None
     
     # 2. Lấy các đánh giá thủ công mới từ SQLite (interaction_type = 'REVIEW')
     try:
@@ -334,7 +335,7 @@ def get_explicit_reviews_for_customer(customer_id, reviews_df):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT customer_id, product_id, rating 
+                SELECT customer_id, product_id, rating, timestamp 
                 FROM User_Interactions 
                 WHERE customer_id = ? AND interaction_type = 'REVIEW'
             ''', (customer_id,))
@@ -354,6 +355,20 @@ def get_explicit_reviews_for_customer(customer_id, reviews_df):
         customer_reviews = customer_reviews.sort_values(
             by='source', ascending=False
         ).drop_duplicates(subset=['product_id'], keep='first')
+        
+        # Ánh xạ ngày đánh giá lịch sử từ reviews.csv
+        try:
+            history_mask = customer_reviews['source'] == 'history'
+            if history_mask.any():
+                reviews_csv_path = os.path.join(DATA_DIR, 'reviews.csv')
+                if os.path.exists(reviews_csv_path):
+                    df_raw_reviews = pd.read_csv(reviews_csv_path)
+                    user_raw = df_raw_reviews[df_raw_reviews['user_id'] == customer_id]
+                    if not user_raw.empty:
+                        date_map = dict(zip(user_raw['product_id'].astype(str).str.strip(), user_raw['date']))
+                        customer_reviews.loc[history_mask, 'timestamp'] = customer_reviews.loc[history_mask, 'product_id'].astype(str).str.strip().map(date_map)
+        except Exception as err:
+            print(f"⚠️ Lỗi map ngày đánh giá lịch sử: {err}")
         
     return customer_reviews
 
@@ -390,8 +405,8 @@ print(f"[ĐO RAM] ==============================================================
 unique_customers = sorted(reviews_data['customer_id'].unique().tolist())
 customer_dict = {cid: f"Customer {cid}" for cid in unique_customers}
 
-# Danh sách sách với product_id
-book_dict = {row['product_id']: row['title'] for _, row in book_data.iterrows()}
+# Danh sách sách với product_id (chuẩn hóa key dạng string)
+book_dict = {str(row['product_id']).strip(): row['title'] for _, row in book_data.iterrows()}
 
 
 # ==================== SIDEBAR - THANH ĐIỀU HƯỚNG ====================
@@ -418,7 +433,7 @@ with st.sidebar:
     
     # Callback để reset thanh tìm kiếm khi thay đổi kịch bản
     def reset_search_on_customer_type_change():
-        new_type = st.session_state.customer_type_radio
+        new_type = st.session_state.get("customer_type_radio", st.session_state.customer_type)
         st.session_state.customer_type = new_type
         
         st.session_state.search_query = ''
@@ -466,8 +481,8 @@ with st.sidebar:
         current_type = st.query_params.get("customer_type")
         current_id = st.query_params.get("customer_id")
         
-        target_type = st.session_state.customer_type
-        target_id = str(st.session_state.current_customer_id) if (st.session_state.customer_type == "👥 Khách hàng cũ" and st.session_state.current_customer_id is not None) else None
+        target_type = st.session_state.get("customer_type")
+        target_id = str(st.session_state.get("current_customer_id")) if (st.session_state.get("customer_type") == "👥 Khách hàng cũ" and st.session_state.get("current_customer_id") is not None) else None
         
         # Chỉ cập nhật nếu có sự khác biệt để tránh kích hoạt rerun vô hạn hoặc thừa
         if current_type != target_type or current_id != target_id:
@@ -483,7 +498,7 @@ with st.sidebar:
         # ==================== CALLBACK KHI ĐỔI CUSTOMER ID ====================
         def on_customer_change():
             new_customer_id = st.session_state.get("customer_selectbox")
-            if new_customer_id != st.session_state.current_customer_id:
+            if new_customer_id != st.session_state.get("current_customer_id"):
                 st.session_state.messages = []
                 st.session_state.current_customer_id = new_customer_id
                 
@@ -998,7 +1013,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     selected_book_id = st.selectbox(
         "Chọn sản phẩm:",
         book_data['product_id'].tolist(),
-        format_func=lambda x: book_dict.get(x, f"Sản phẩm {x}"),
+        format_func=lambda x: book_dict.get(str(x).strip(), f"Sản phẩm {x}"),
         key="cold_start_book"
     )
     
@@ -1368,6 +1383,10 @@ else:
         except:
             all_categories = ['Tất cả']
         
+        # Callback để đồng bộ danh mục được chọn ngay lập tức
+        def on_category_selectbox_change():
+            st.session_state.selected_category = st.session_state.get("tab_category_select_selectbox", "Tất cả")
+
         # Selectbox để chọn danh mục
         default_cat_index = 0
         if st.session_state.selected_category in all_categories:
@@ -1377,7 +1396,8 @@ else:
             "Chọn danh mục:",
             options=all_categories,
             index=default_cat_index,
-            key="tab_category_select_selectbox"
+            key="tab_category_select_selectbox",
+            on_change=on_category_selectbox_change
         )
         st.session_state.selected_category = selected_cat
         
@@ -1451,9 +1471,42 @@ else:
         customer_reviews = get_explicit_reviews_for_customer(selected_customer, reviews_data)
             
         customer_reviews_display = customer_reviews.copy()
-        customer_reviews_display['product_title'] = customer_reviews_display['product_id'].map(book_dict)
-        customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating']]
-        customer_reviews_display.columns = ['ID Sản phẩm', 'Tên Sản phẩm', 'Đánh giá']
+        customer_reviews_display['product_title'] = customer_reviews_display['product_id'].astype(str).str.strip().map(book_dict)
+        
+        # Định dạng thời gian đồng nhất và đổi múi giờ sang UTC+7 cho SQLite
+        def format_review_date(row):
+            val = row['timestamp']
+            source = row['source']
+            if pd.isna(val) or val is None or str(val).strip() == "":
+                return "Không xác định"
+            val_str = str(val).strip()
+            
+            from datetime import datetime, timedelta
+            
+            if source == 'new':
+                try:
+                    # SQLite timestamp mặc định là YYYY-MM-DD HH:MM:SS (UTC)
+                    dt = datetime.strptime(val_str, "%Y-%m-%d %H:%M:%S")
+                    dt_local = dt + timedelta(hours=7)  # Chuyển sang giờ Việt Nam (UTC+7)
+                    return dt_local.strftime("%d/%m/%Y %H:%M:%S")
+                except Exception:
+                    pass
+            
+            for fmt in ["%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
+                try:
+                    dt = datetime.strptime(val_str, fmt)
+                    return dt.strftime("%d/%m/%Y %H:%M:%S")
+                except Exception:
+                    continue
+            return val_str
+            
+        if not customer_reviews_display.empty:
+            customer_reviews_display['display_time'] = customer_reviews_display.apply(format_review_date, axis=1)
+        else:
+            customer_reviews_display['display_time'] = []
+            
+        customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating', 'display_time']]
+        customer_reviews_display.columns = ['ID Sản phẩm', 'Tên Sản phẩm', 'Đánh giá', 'Thời gian']
         
         st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sản phẩm đã đánh giá")
         st.dataframe(customer_reviews_display, use_container_width=True, hide_index=True)

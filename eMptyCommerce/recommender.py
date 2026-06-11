@@ -93,6 +93,7 @@ class HybridRecommender:
             book_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
             if os.path.exists(book_path):
                 self.book_data = pd.read_csv(book_path).reset_index(drop=True)
+                self.book_data['product_id'] = self.book_data['product_id'].astype(str).str.strip()
                 self.known_products = set(self.book_data['product_id'].unique())
                 print(f"    Đọc {len(self.book_data)} sản phẩm từ {book_path}")
             else:
@@ -102,6 +103,7 @@ class HybridRecommender:
             reviews_path = os.path.join(DATA_DIR, 'clean_reviews.csv')
             if os.path.exists(reviews_path):
                 self.reviews_data = pd.read_csv(reviews_path)
+                self.reviews_data['product_id'] = self.reviews_data['product_id'].astype(str).str.strip()
                 self.reviews_data['is_recent'] = 0
                 self.known_customers = set(self.reviews_data['customer_id'].unique())
                 print(f"    Đọc {len(self.reviews_data)} đánh giá từ {reviews_path}")
@@ -204,9 +206,9 @@ class HybridRecommender:
             
             # Bước 4: Huấn luyện SVD
             self.svd_model = SVD(
-                n_factors=50,  # Số latent factors
-                n_epochs=40,  # Số epoch huấn luyện
-                lr_all=0.005,  # Learning rate
+                n_factors=50,  # Số latent factors tìm ra 50 đặc trưng ẩn để mô tả sở thích của người dùng và thuộc tính của sản phẩm.
+                n_epochs=40,  # Số lần lặp huấn luyện
+                lr_all=0.005,  # Tốc độ học (Optimization step size). Điều chỉnh mức độ thay đổi mô hình qua mỗi lần lặp. 
                 reg_all=0.02,  # Regularization parameter
                 random_state=42
             )
@@ -260,7 +262,7 @@ class HybridRecommender:
         """
         try:
             # Bước 1: Tìm index (số thứ tự dòng) của cuốn sách có product_id tương ứng
-            idx = self.book_data[self.book_data['product_id'] == product_id].index[0]
+            idx = self.book_data[self.book_data['product_id'].astype(str).str.strip() == str(product_id).strip()].index[0]
         except IndexError:
             # Nếu không tìm thấy sách -> trả về DataFrame rỗng
             return pd.DataFrame()
@@ -327,9 +329,9 @@ class HybridRecommender:
             print(f"   → Dùng Content-Based 100% để gợi ý")
             
             # Nếu khách đang xem 1 sản phẩm cụ thể
-            if product_id_viewed is not None and product_id_viewed in self.known_products:
+            if product_id_viewed is not None and str(product_id_viewed).strip() in self.known_products:
                 print(f"   → Gợi ý dựa trên sản phẩm đang xem: {product_id_viewed}")
-                return self.get_content_based_recommendations(product_id_viewed, top_n)
+                return self.get_content_based_recommendations(str(product_id_viewed).strip(), top_n)
             
             # Nếu không có sản phẩm tham chiếu -> Thử lấy sản phẩm trong giỏ hàng (nếu có) trước khi fallback về phổ biến nhất
             else:
@@ -340,9 +342,9 @@ class HybridRecommender:
                         cart_items = get_cart_items(st.session_state.cart_id)
                         if not cart_items.empty:
                             # Lọc các cuốn sách có trong danh mục sản phẩm hợp lệ của hệ thống
-                            valid_items = cart_items[cart_items['product_id'].isin(self.known_products)]
+                            valid_items = cart_items[cart_items['product_id'].astype(str).str.strip().isin(self.known_products)]
                             if not valid_items.empty:
-                                last_cart_product_id = int(valid_items.iloc[0]['product_id'])
+                                last_cart_product_id = str(valid_items.iloc[0]['product_id']).strip()
                                 print(f"   → Gợi ý cho người dùng mới dựa trên sản phẩm trong giỏ hàng: {last_cart_product_id}")
                                 recs = self.get_content_based_recommendations(last_cart_product_id, top_n)
                                 if not recs.empty:
@@ -421,17 +423,17 @@ class HybridRecommender:
                         from db_utils import get_cart_items
                         cart_items = get_cart_items(st.session_state.cart_id)
                         if not cart_items.empty:
-                            session_context_pids.update(cart_items['product_id'].dropna().astype(int).tolist())
+                            session_context_pids.update(cart_items['product_id'].dropna().astype(str).str.strip().tolist())
                     
                     # Lấy sản phẩm đang xem chi tiết
                     viewed_id = st.session_state.get("selected_book_for_reviews")
                     if viewed_id is not None:
-                        session_context_pids.add(int(viewed_id))
+                        session_context_pids.add(str(viewed_id).strip())
             except Exception as e:
                 print(f"     Lỗi lấy session context pids: {e}")
                 
             if product_id_viewed is not None:
-                session_context_pids.add(int(product_id_viewed))
+                session_context_pids.add(str(product_id_viewed).strip())
 
             # 2. Lấy 3 tương tác gần đây nhất có ID khác nhau từ SQLite (để biết họ vừa quan tâm cuốn nào)
             latest_unique_pids = []
@@ -452,16 +454,16 @@ class HybridRecommender:
                     rows = cursor.fetchall()
                     conn.close()
                     for r in rows:
-                        latest_unique_pids.append(int(r[0]))
+                        latest_unique_pids.append(str(r[0]).strip())
                 except Exception as db_err:
                     print(f"     Lỗi lấy tương tác mới nhất từ SQLite: {db_err}")
 
             # 3. Tự động thay đổi trọng số nếu phát hiện ngữ cảnh phiên hoặc tương tác gần đây (Demo Mode)
             if session_context_pids or latest_unique_pids:
                 print("   → Phát hiện hành động/tương tác mới của người dùng trong phiên này")
-                print("   → Điều chỉnh trọng số: 80% Content-Based + 20% Collaborative Filtering")
-                content_weight = 0.8
-                collab_weight = 0.2
+                print("   → Điều chỉnh trọng số: 45% Content-Based + 55% Collaborative Filtering")
+                content_weight = 0.45
+                collab_weight = 0.55
             
             print(f"   → Kết hợp SVD ({collab_weight*100:.0f}%) + Content-Based ({content_weight*100:.0f}%)")
             
@@ -513,24 +515,31 @@ class HybridRecommender:
                 if interacted_reviews.empty or product_id not in self.product_id_to_idx:
                     content_scores[product_id] = 0
                 else:
-                    weighted_sims = []
-                    weights = []
+                    max_sim = 0.0
                     for _, row in interacted_reviews.iterrows():
-                        ref_pid = int(row['product_id'])
+                        ref_pid = str(row['product_id']).strip()
                         ref_rating = float(row['rating'])
+                        is_recent = row.get('is_recent', 0)
+                        
+                        # Điều chỉnh nhẹ rating của tương tác ẩn để không bị lấn át lịch sử đánh giá thực tế
+                        if is_recent == 1:
+                            if ref_rating == 1.0:      # VIEW
+                                ref_rating = 2.0
+                            elif ref_rating == 3.0:    # ADD_TO_CART
+                                ref_rating = 3.5
                         
                         # Phân cấp bội số trọng số theo thứ tự thời gian gần nhất (SQLite) và giỏ hàng hoạt động
                         multiplier = 1.0
-                        if ref_pid in session_context_pids:
-                            multiplier = 30.0
-                        elif ref_pid in latest_unique_pids:
+                        if ref_pid in latest_unique_pids:
                             idx = latest_unique_pids.index(ref_pid)
                             if idx == 0:
-                                multiplier = 100.0  # Tương tác gần nhất tuyệt đối (vừa mua/xem/đánh giá xong)
+                                multiplier = 1.3  # Giảm xuống từ 1.8 để tránh bias quá mức vào tương tác mới
                             elif idx == 1:
-                                multiplier = 10.0   # Tương tác gần nhì
+                                multiplier = 1.2  # Giảm xuống từ 1.4
                             else:
-                                multiplier = 5.0    # Tương tác gần ba
+                                multiplier = 1.1
+                        elif ref_pid in session_context_pids:
+                            multiplier = 1.2  # Giảm xuống từ 1.4
                         
                         effective_weight = ref_rating * multiplier
                         
@@ -547,10 +556,12 @@ class HybridRecommender:
                             # Giới hạn sim tối đa là 1.0
                             sim = min(1.0, sim)
                             
-                            weighted_sims.append(sim * effective_weight)
-                            weights.append(effective_weight)
+                            # Đóng góp điểm tỉ lệ với trọng số quan tâm của sản phẩm tham chiếu
+                            score_contrib = sim * (effective_weight / 5.0)
+                            if score_contrib > max_sim:
+                                max_sim = score_contrib
                     
-                    content_scores[product_id] = (sum(weighted_sims) / sum(weights)) if weights else 0
+                    content_scores[product_id] = min(1.0, max_sim)
             
             # Kết hợp scores
             hybrid_scores = {}
@@ -672,6 +683,7 @@ class HybridRecommender:
             reviews_path = os.path.join(DATA_DIR, 'clean_reviews.csv')
             if os.path.exists(reviews_path):
                 base_reviews = pd.read_csv(reviews_path)
+                base_reviews['product_id'] = base_reviews['product_id'].astype(str).str.strip()
             else:
                 base_reviews = pd.DataFrame(columns=['customer_id', 'product_id', 'rating'])
                 
@@ -777,6 +789,7 @@ class KNNRecommender:
         try:
             # Bước 1: Đọc dữ liệu
             df = pd.read_csv(self.db_path)
+            df['product_id'] = df['product_id'].astype(str).str.strip()
             
             # Bước 2: Xác định Rating Scale
             rating_min = df['rating'].min()
@@ -840,6 +853,7 @@ class KNNRecommender:
         
         # Bước 1: Đọc dữ liệu
         df = pd.read_csv(self.db_path)
+        df['product_id'] = df['product_id'].astype(str).str.strip()
         
         # Bước 2: Lấy sản phẩm khách đã đánh giá
         rated_products = set(
