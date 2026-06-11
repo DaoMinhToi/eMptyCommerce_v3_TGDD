@@ -92,7 +92,11 @@ class HybridRecommender:
             # Đọc dữ liệu sách
             book_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
             if os.path.exists(book_path):
-                self.book_data = pd.read_csv(book_path).reset_index(drop=True)
+                df = pd.read_csv(book_path).reset_index(drop=True)
+                # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
+                if df is not None and not df.empty:
+                    df = df[df['title'].notna() & (df['title'].astype(str).str.strip() != '') & (df['title'].astype(str).str.strip() != 'Sản phẩm không tên')].reset_index(drop=True)
+                self.book_data = df
                 self.book_data['product_id'] = self.book_data['product_id'].astype(str).str.strip()
                 self.known_products = set(self.book_data['product_id'].unique())
                 print(f"    Đọc {len(self.book_data)} sản phẩm từ {book_path}")
@@ -361,6 +365,10 @@ class HybridRecommender:
                         'data', 'book_data.csv'
                     )
                     book_data_full = pd.read_csv(book_data_path)
+                    
+                    # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
+                    if book_data_full is not None and not book_data_full.empty:
+                        book_data_full = book_data_full[book_data_full['title'].notna() & (book_data_full['title'].astype(str).str.strip() != '') & (book_data_full['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
                     
                     # Xử lý dữ liệu - deduplicate with keep='first'
                     book_data_full = book_data_full.drop_duplicates(subset='product_id', keep='first')

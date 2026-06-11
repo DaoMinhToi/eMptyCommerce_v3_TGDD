@@ -201,7 +201,11 @@ def load_book_data():
     Cache để tránh đọc file liên tục.
     """
     try:
-        return pd.read_csv(os.path.join(DATA_DIR, 'clean_book_data.csv'))
+        df = pd.read_csv(os.path.join(DATA_DIR, 'clean_book_data.csv'))
+        # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
+        if df is not None and not df.empty:
+            df = df[df['title'].notna() & (df['title'].astype(str).str.strip() != '') & (df['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
+        return df
     except FileNotFoundError:
         st.error(f"❌ Không tìm thấy file {os.path.join(DATA_DIR, 'clean_book_data.csv')}")
         return None
@@ -290,6 +294,10 @@ def get_bestseller(top_n=10):
     try:
         # Load từ book_data.csv (có cột n_review, avg_rating)
         df = pd.read_csv(os.path.join(DATA_DIR, 'book_data.csv'))
+        
+        # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
+        if df is not None and not df.empty:
+            df = df[df['title'].notna() & (df['title'].astype(str).str.strip() != '') & (df['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
         
         # Xóa duplicate product_id, giữ lại 1 dòng mỗi sách
         df = df.drop_duplicates(subset='product_id')
@@ -1410,6 +1418,10 @@ else:
         
         try:
             book_df_full = pd.read_csv(os.path.join(DATA_DIR, 'book_data.csv'))
+            
+            # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
+            if book_df_full is not None and not book_df_full.empty:
+                book_df_full = book_df_full[book_df_full['title'].notna() & (book_df_full['title'].astype(str).str.strip() != '') & (book_df_full['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
             
             # Chỉ giữ category xuất hiện >= 5 lần (loại bỏ tên sách bị nhầm thành category)
             cat_counts = book_df_full['category'].value_counts()
