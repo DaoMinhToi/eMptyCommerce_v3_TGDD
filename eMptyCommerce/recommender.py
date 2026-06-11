@@ -524,22 +524,24 @@ class HybridRecommender:
                         # Điều chỉnh nhẹ rating của tương tác ẩn để không bị lấn át lịch sử đánh giá thực tế
                         if is_recent == 1:
                             if ref_rating == 1.0:      # VIEW
-                                ref_rating = 2.0
+                                ref_rating = 1.5
                             elif ref_rating == 3.0:    # ADD_TO_CART
-                                ref_rating = 3.5
+                                ref_rating = 2.5
+                            elif ref_rating == 5.0:    # PURCHASE
+                                ref_rating = 4.0
                         
                         # Phân cấp bội số trọng số theo thứ tự thời gian gần nhất (SQLite) và giỏ hàng hoạt động
                         multiplier = 1.0
                         if ref_pid in latest_unique_pids:
                             idx = latest_unique_pids.index(ref_pid)
                             if idx == 0:
-                                multiplier = 1.3  # Giảm xuống từ 1.8 để tránh bias quá mức vào tương tác mới
+                                multiplier = 1.15  # Đã tối ưu hóa để tránh bias quá mức vào tương tác mới
                             elif idx == 1:
-                                multiplier = 1.2  # Giảm xuống từ 1.4
-                            else:
                                 multiplier = 1.1
+                            else:
+                                multiplier = 1.05
                         elif ref_pid in session_context_pids:
-                            multiplier = 1.2  # Giảm xuống từ 1.4
+                            multiplier = 1.1
                         
                         effective_weight = ref_rating * multiplier
                         
