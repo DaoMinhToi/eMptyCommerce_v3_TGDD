@@ -507,8 +507,29 @@ class HybridRecommender:
                         return 1.0
                 return 0.0
 
-            # Tạo mapping product_id -> title để lookup nhanh
+            # Tạo mapping product_id -> title và product_id -> category để lookup nhanh
             pid_to_title = dict(zip(self.book_data['product_id'], self.book_data['title']))
+            pid_to_category = dict(zip(self.book_data['product_id'], self.book_data['category']))
+
+            # Phân tách danh mục theo ngữ cảnh phiên và lịch sử để áp dụng Category Boost
+            active_categories = set()
+            for pid in list(session_context_pids) + latest_unique_pids:
+                cat = pid_to_category.get(pid)
+                if cat:
+                    active_categories.add(cat)
+                    
+            most_recent_category = None
+            if latest_unique_pids:
+                most_recent_category = pid_to_category.get(latest_unique_pids[0])
+                
+            other_active_categories = active_categories - {most_recent_category}
+            
+            historical_categories = set()
+            for _, row in interacted_reviews.iterrows():
+                pid = str(row['product_id']).strip()
+                cat = pid_to_category.get(pid)
+                if cat and cat not in active_categories:
+                    historical_categories.add(cat)
 
             content_scores = {}
             for product_id in unrated_products:
@@ -526,7 +547,7 @@ class HybridRecommender:
                             if ref_rating == 1.0:      # VIEW
                                 ref_rating = 1.5
                             elif ref_rating == 3.0:    # ADD_TO_CART
-                                ref_rating = 2.5
+                                ref_rating = 2.7
                             elif ref_rating == 5.0:    # PURCHASE
                                 ref_rating = 4.0
                         
@@ -574,11 +595,22 @@ class HybridRecommender:
                 normalized_svd = max(0, min(1, normalized_svd))  # Clip to [0, 1]
                 normalized_content = max(0.0, min(1.0, content_scores[product_id]))  # Clip content similarity to [0, 1]
                 
-                # Tính hybrid score
-                hybrid_scores[product_id] = (
+                # Tính hybrid score cơ bản
+                score = (
                     collab_weight * normalized_svd +
                     content_weight * normalized_content
                 )
+                
+                # Áp dụng Category Boost phân cấp (Tiered Category Boost)
+                prod_cat = pid_to_category.get(product_id)
+                if prod_cat == most_recent_category:
+                    score += 0.12  # Boost mạnh cho danh mục vừa tương tác gần nhất
+                elif prod_cat in other_active_categories:
+                    score += 0.05  # Boost nhẹ cho các danh mục khác đang có trong phiên hiện tại
+                elif prod_cat in historical_categories:
+                    score += 0.02  # Boost duy trì cho danh mục có trong lịch sử đánh giá thực tế
+                    
+                hybrid_scores[product_id] = score
             
             # Sắp xếp và lấy top N
             sorted_products = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
