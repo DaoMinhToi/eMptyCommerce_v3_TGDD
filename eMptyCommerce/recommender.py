@@ -496,6 +496,23 @@ class HybridRecommender:
                 (self.reviews_data['rating'] > 0)
             ].copy()
             
+            # [SỬA LỖI 3] Bổ sung các sản phẩm từ session_context_pids và latest_unique_pids chưa có trong interacted_reviews
+            existing_pids = set(interacted_reviews['product_id'].astype(str).str.strip().tolist()) if not interacted_reviews.empty else set()
+            new_rows = []
+            all_recent_pids = set(list(session_context_pids) + latest_unique_pids)
+            for pid in all_recent_pids:
+                normalized_pid = str(pid).strip()
+                if normalized_pid not in existing_pids:
+                    new_rows.append({
+                        'customer_id': customer_id,
+                        'product_id': normalized_pid,
+                        'rating': 2.0,      # Điểm mặc định cho tương tác ẩn gần đây
+                        'is_recent': 1
+                    })
+            if new_rows:
+                df_new_rows = pd.DataFrame(new_rows)
+                interacted_reviews = pd.concat([interacted_reviews, df_new_rows], ignore_index=True)
+            
             # Các từ khóa nhận diện bộ truyện (Series Keywords) để kích hoạt Series Boost đặc biệt
             SERIES_KEYWORDS = {'doraemon', 'conan', 'one piece', 'harry potter', 'sherlock', 'dragon ball', 'ehon', 'shin'}
             
@@ -531,13 +548,33 @@ class HybridRecommender:
                 if cat and cat not in active_categories:
                     historical_categories.add(cat)
 
+            # [SỬA LỖI 2] Tính toán boost_scale để chia sẻ lượng boost nếu có nhiều danh mục hoạt động
+            boost_scale = 1.0 / max(1, len(active_categories))
+
+            # Ánh xạ danh mục cho các sản phẩm đã tương tác để phục vụ phân đoạn
+            interacted_reviews['category'] = interacted_reviews['product_id'].map(pid_to_category)
+
             content_scores = {}
             for product_id in unrated_products:
                 if interacted_reviews.empty or product_id not in self.product_id_to_idx:
                     content_scores[product_id] = 0
                 else:
-                    max_sim = 0.0
-                    for _, row in interacted_reviews.iterrows():
+                    target_cat = pid_to_category.get(product_id)
+                    
+                    # Phân đoạn Content-Based theo danh mục (Category-Segmented Content Filtering)
+                    # Nếu có sản phẩm cùng danh mục trong lịch sử, chỉ tính trung bình có trọng số trên các sản phẩm đó
+                    # nhằm tránh việc các danh mục khác pha loãng (dilute) điểm số của danh mục này.
+                    same_cat_reviews = interacted_reviews[interacted_reviews['category'] == target_cat] if target_cat else pd.DataFrame()
+                    
+                    if not same_cat_reviews.empty:
+                        refs = same_cat_reviews
+                    else:
+                        refs = interacted_reviews
+                        
+                    # [SỬA LỖI 1] Áp dụng weighted average thay vì max_sim
+                    sum_weighted_sim = 0.0
+                    sum_weights = 0.0
+                    for _, row in refs.iterrows():
                         ref_pid = str(row['product_id']).strip()
                         ref_rating = float(row['rating'])
                         is_recent = row.get('is_recent', 0)
@@ -565,7 +602,9 @@ class HybridRecommender:
                             multiplier = 1.1
                         
                         effective_weight = ref_rating * multiplier
+                        sum_weights += effective_weight
                         
+                        sim = 0.0
                         if ref_pid in self.product_id_to_idx:
                             ref_idx = self.product_id_to_idx[ref_pid]
                             prod_idx = self.product_id_to_idx[product_id]
@@ -579,12 +618,12 @@ class HybridRecommender:
                             # Giới hạn sim tối đa là 1.0
                             sim = min(1.0, sim)
                             
-                            # Đóng góp điểm tỉ lệ với trọng số quan tâm của sản phẩm tham chiếu
-                            score_contrib = sim * (effective_weight / 5.0)
-                            if score_contrib > max_sim:
-                                max_sim = score_contrib
+                        sum_weighted_sim += sim * effective_weight
                     
-                    content_scores[product_id] = min(1.0, max_sim)
+                    if sum_weights > 0:
+                        content_scores[product_id] = max(0.0, min(1.0, sum_weighted_sim / sum_weights))
+                    else:
+                        content_scores[product_id] = 0.0
             
             # Kết hợp scores
             hybrid_scores = {}
@@ -601,12 +640,12 @@ class HybridRecommender:
                     content_weight * normalized_content
                 )
                 
-                # Áp dụng Category Boost phân cấp (Tiered Category Boost)
+                # [SỬA LỖI 2] Áp dụng Category Boost phân cấp có tỷ lệ (Tiered Category Boost)
                 prod_cat = pid_to_category.get(product_id)
                 if prod_cat == most_recent_category:
-                    score += 0.12  # Boost mạnh cho danh mục vừa tương tác gần nhất
+                    score += 0.06 * boost_scale  # Boost giảm xuống 0.06 và nhân hệ số chia sẻ
                 elif prod_cat in other_active_categories:
-                    score += 0.05  # Boost nhẹ cho các danh mục khác đang có trong phiên hiện tại
+                    score += 0.04 * boost_scale  # Boost giảm xuống 0.04 và nhân hệ số chia sẻ
                 elif prod_cat in historical_categories:
                     score += 0.02  # Boost duy trì cho danh mục có trong lịch sử đánh giá thực tế
                     
