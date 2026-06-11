@@ -461,11 +461,18 @@ class HybridRecommender:
             # 3. Tự động thay đổi trọng số nếu phát hiện ngữ cảnh phiên hoặc tương tác gần đây (Demo Mode)
             if session_context_pids or latest_unique_pids:
                 print("   → Phát hiện hành động/tương tác mới của người dùng trong phiên này")
-                print("   → Điều chỉnh trọng số: 45% Content-Based + 55% Collaborative Filtering")
+                print("   → Điều chỉnh trọng số: 45% Content-Based + 55% Collaborative Filtering để giữ cân bằng với lịch sử")
                 content_weight = 0.45
                 collab_weight = 0.55
             
             print(f"   → Kết hợp SVD ({collab_weight*100:.0f}%) + Content-Based ({content_weight*100:.0f}%)")
+            
+            # Lấy danh sách các danh mục sản phẩm (categories) người dùng vừa tương tác trong phiên này
+            recent_categories = set()
+            for ref_pid in (session_context_pids | set(latest_unique_pids)):
+                matched = self.book_data[self.book_data['product_id'] == ref_pid]
+                if not matched.empty:
+                    recent_categories.add(matched.iloc[0]['category'])
             
             # Lấy sản phẩm khách đã đánh giá
             customer_rated = set(
@@ -490,28 +497,11 @@ class HybridRecommender:
                     svd_scores[product_id] = 0  # Nếu predict fails
 
             # Tính Content-Based scores
-            # Sử dụng tất cả tương tác (VIEW=1.0, ADD_TO_CART=3.0, PURCHASE=5.0) làm trọng số tính trung bình similarity.
+            # Sử dụng tương tác tích cực (rating >= 3.0) HOẶC các tương tác gần đây (is_recent == 1, bao gồm cả VIEW 1.0)
             interacted_reviews = self.reviews_data[
                 (self.reviews_data['customer_id'] == customer_id) &
-                (self.reviews_data['rating'] > 0)
+                ((self.reviews_data['rating'] >= 3.0) | (self.reviews_data['is_recent'] == 1))
             ].copy()
-            
-            # [SỬA LỖI 3] Bổ sung các sản phẩm từ session_context_pids và latest_unique_pids chưa có trong interacted_reviews
-            existing_pids = set(interacted_reviews['product_id'].astype(str).str.strip().tolist()) if not interacted_reviews.empty else set()
-            new_rows = []
-            all_recent_pids = set(list(session_context_pids) + latest_unique_pids)
-            for pid in all_recent_pids:
-                normalized_pid = str(pid).strip()
-                if normalized_pid not in existing_pids:
-                    new_rows.append({
-                        'customer_id': customer_id,
-                        'product_id': normalized_pid,
-                        'rating': 2.0,      # Điểm mặc định cho tương tác ẩn gần đây
-                        'is_recent': 1
-                    })
-            if new_rows:
-                df_new_rows = pd.DataFrame(new_rows)
-                interacted_reviews = pd.concat([interacted_reviews, df_new_rows], ignore_index=True)
             
             # Các từ khóa nhận diện bộ truyện (Series Keywords) để kích hoạt Series Boost đặc biệt
             SERIES_KEYWORDS = {'doraemon', 'conan', 'one piece', 'harry potter', 'sherlock', 'dragon ball', 'ehon', 'shin'}
@@ -524,87 +514,48 @@ class HybridRecommender:
                         return 1.0
                 return 0.0
 
-            # Tạo mapping product_id -> title và product_id -> category để lookup nhanh
+            # Tạo mapping product_id -> title để lookup nhanh
             pid_to_title = dict(zip(self.book_data['product_id'], self.book_data['title']))
-            pid_to_category = dict(zip(self.book_data['product_id'], self.book_data['category']))
-
-            # Phân tách danh mục theo ngữ cảnh phiên và lịch sử để áp dụng Category Boost
-            active_categories = set()
-            for pid in list(session_context_pids) + latest_unique_pids:
-                cat = pid_to_category.get(pid)
-                if cat:
-                    active_categories.add(cat)
-                    
-            most_recent_category = None
-            if latest_unique_pids:
-                most_recent_category = pid_to_category.get(latest_unique_pids[0])
-                
-            other_active_categories = active_categories - {most_recent_category}
-            
-            historical_categories = set()
-            for _, row in interacted_reviews.iterrows():
-                pid = str(row['product_id']).strip()
-                cat = pid_to_category.get(pid)
-                if cat and cat not in active_categories:
-                    historical_categories.add(cat)
-
-            # [SỬA LỖI 2] Tính toán boost_scale để chia sẻ lượng boost nếu có nhiều danh mục hoạt động
-            boost_scale = 1.0 / max(1, len(active_categories))
-
-            # Ánh xạ danh mục cho các sản phẩm đã tương tác để phục vụ phân đoạn
-            interacted_reviews['category'] = interacted_reviews['product_id'].map(pid_to_category)
 
             content_scores = {}
             for product_id in unrated_products:
                 if interacted_reviews.empty or product_id not in self.product_id_to_idx:
                     content_scores[product_id] = 0
                 else:
-                    target_cat = pid_to_category.get(product_id)
-                    
-                    # Phân đoạn Content-Based theo danh mục (Category-Segmented Content Filtering)
-                    # Nếu có sản phẩm cùng danh mục trong lịch sử, chỉ tính trung bình có trọng số trên các sản phẩm đó
-                    # nhằm tránh việc các danh mục khác pha loãng (dilute) điểm số của danh mục này.
-                    same_cat_reviews = interacted_reviews[interacted_reviews['category'] == target_cat] if target_cat else pd.DataFrame()
-                    
-                    if not same_cat_reviews.empty:
-                        refs = same_cat_reviews
-                    else:
-                        refs = interacted_reviews
-                        
-                    # [SỬA LỖI 1] Áp dụng weighted average thay vì max_sim
-                    sum_weighted_sim = 0.0
-                    sum_weights = 0.0
-                    for _, row in refs.iterrows():
+                    max_sim = 0.0
+                    for _, row in interacted_reviews.iterrows():
                         ref_pid = str(row['product_id']).strip()
                         ref_rating = float(row['rating'])
                         is_recent = row.get('is_recent', 0)
                         
-                        # Điều chỉnh nhẹ rating của tương tác ẩn để không bị lấn át lịch sử đánh giá thực tế
+                        # Đồng bộ cờ nếu nằm trong danh sách tương tác gần đây
+                        if ref_pid in latest_unique_pids or ref_pid in session_context_pids:
+                            is_recent = 1
+                        
+                        # Tăng cường rating cho tương tác gần đây nhưng giữ mức độ vừa phải để không lấn át lịch sử
                         if is_recent == 1:
-                            if ref_rating == 1.0:      # VIEW
-                                ref_rating = 1.5
-                            elif ref_rating == 3.0:    # ADD_TO_CART
-                                ref_rating = 2.7
-                            elif ref_rating == 5.0:    # PURCHASE
-                                ref_rating = 4.0
+                            if ref_rating <= 2.0:      # VIEW (1.0)
+                                ref_rating = 2.5
+                            elif ref_rating <= 3.5:    # ADD_TO_CART (3.0)
+                                ref_rating = 3.5
+                            else:                      # PURCHASE (5.0) hoặc REVIEW mới
+                                ref_rating = 4.5
                         
                         # Phân cấp bội số trọng số theo thứ tự thời gian gần nhất (SQLite) và giỏ hàng hoạt động
                         multiplier = 1.0
                         if ref_pid in latest_unique_pids:
                             idx = latest_unique_pids.index(ref_pid)
                             if idx == 0:
-                                multiplier = 1.15  # Đã tối ưu hóa để tránh bias quá mức vào tương tác mới
+                                multiplier = 1.05  # Giảm hệ số bias tương tác mới
                             elif idx == 1:
-                                multiplier = 1.1
+                                multiplier = 1.03
                             else:
-                                multiplier = 1.05
+                                multiplier = 1.01
                         elif ref_pid in session_context_pids:
-                            multiplier = 1.1
+                            multiplier = 1.03
                         
                         effective_weight = ref_rating * multiplier
-                        sum_weights += effective_weight
                         
-                        sim = 0.0
                         if ref_pid in self.product_id_to_idx:
                             ref_idx = self.product_id_to_idx[ref_pid]
                             prod_idx = self.product_id_to_idx[product_id]
@@ -618,44 +569,77 @@ class HybridRecommender:
                             # Giới hạn sim tối đa là 1.0
                             sim = min(1.0, sim)
                             
-                        sum_weighted_sim += sim * effective_weight
+                            # Đóng góp điểm tỉ lệ với trọng số quan tâm của sản phẩm tham chiếu (gần gũi và mượt mà hơn)
+                            # Thay vì ref_rating / 5.0 (làm 3 sao bị phạt nặng thành 0.6), dùng công thức giảm nhẹ hình phạt: 
+                            # 3 sao -> 0.8, 4 sao -> 0.9, 5 sao -> 1.0
+                            scaled_weight = 0.5 + 0.5 * (effective_weight / 5.0)
+                            score_contrib = sim * scaled_weight
+                            if score_contrib > max_sim:
+                                max_sim = score_contrib
                     
-                    if sum_weights > 0:
-                        content_scores[product_id] = max(0.0, min(1.0, sum_weighted_sim / sum_weights))
-                    else:
-                        content_scores[product_id] = 0.0
+                    # Áp dụng Category Boost nhẹ nhàng nếu sản phẩm cùng danh mục đang tương tác trong phiên
+                    cand_category = self.book_data[self.book_data['product_id'] == product_id].iloc[0]['category']
+                    if cand_category in recent_categories:
+                        max_sim = max_sim * 1.05  # Giảm xuống 1.05 để tránh đẩy điểm chạm trần 1.0 quá dễ dàng
+                        
+                    content_scores[product_id] = min(1.0, max_sim)
             
+            # Chuẩn hóa SVD Min-Max cụ thể theo dải điểm dự đoán của chính khách hàng này (User-Specific Normalization)
+            # Tránh hiện tượng toàn bộ SVD scores tập trung quanh mức ~3.8 và chuẩn hóa ra kết quả flat ~0.70
+            if svd_scores:
+                min_svd = min(svd_scores.values())
+                max_svd = max(svd_scores.values())
+                svd_range = max_svd - min_svd
+            else:
+                min_svd, max_svd, svd_range = 0.0, 1.0, 1.0
+
             # Kết hợp scores
             hybrid_scores = {}
             for product_id in unrated_products:
-                # Normalize scores về [0, 1] dựa trên rating scale được detect
-                rating_range = self.rating_max - self.rating_min
-                normalized_svd = (svd_scores[product_id] - self.rating_min) / rating_range if rating_range > 0 else 0
-                normalized_svd = max(0, min(1, normalized_svd))  # Clip to [0, 1]
+                if svd_range > 0:
+                    normalized_svd = (svd_scores[product_id] - min_svd) / svd_range
+                else:
+                    normalized_svd = 0.5
+                normalized_svd = max(0.0, min(1.0, normalized_svd))  # Clip to [0, 1]
                 normalized_content = max(0.0, min(1.0, content_scores[product_id]))  # Clip content similarity to [0, 1]
                 
-                # Tính hybrid score cơ bản
-                score = (
+                # Tính hybrid score
+                hybrid_scores[product_id] = (
                     collab_weight * normalized_svd +
                     content_weight * normalized_content
                 )
-                
-                # [SỬA LỖI 2] Áp dụng Category Boost phân cấp có tỷ lệ (Tiered Category Boost)
-                prod_cat = pid_to_category.get(product_id)
-                if prod_cat == most_recent_category:
-                    score += 0.06 * boost_scale  # Boost giảm xuống 0.06 và nhân hệ số chia sẻ
-                elif prod_cat in other_active_categories:
-                    score += 0.04 * boost_scale  # Boost giảm xuống 0.04 và nhân hệ số chia sẻ
-                elif prod_cat in historical_categories:
-                    score += 0.02  # Boost duy trì cho danh mục có trong lịch sử đánh giá thực tế
-                    
-                hybrid_scores[product_id] = score
             
-            # Sắp xếp và lấy top N
-            sorted_products = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            # Sắp xếp và lấy top N có đa dạng hóa danh mục (Category Diversification)
+            sorted_products = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)
+            
+            # Giới hạn số lượng sản phẩm tối đa cho mỗi danh mục trong top gợi ý để tăng tính đa dạng
+            max_per_category = max(2, top_n // 3) if top_n >= 5 else 2
+            category_counts = {}
+            
+            selected_products = []
+            for product_id, score in sorted_products:
+                if len(selected_products) >= top_n:
+                    break
+                product_info = self.book_data[self.book_data['product_id'] == product_id].iloc[0]
+                cat = product_info['category']
+                
+                # Chỉ lấy nếu chưa vượt quá giới hạn của danh mục đó
+                if category_counts.get(cat, 0) < max_per_category:
+                    selected_products.append((product_id, score))
+                    category_counts[cat] = category_counts.get(cat, 0) + 1
+            
+            # Nếu danh sách được chọn chưa đủ top_n (do lọc quá chặt), lấy thêm theo thứ tự điểm giảm dần
+            if len(selected_products) < top_n:
+                selected_ids = {p[0] for p in selected_products}
+                for product_id, score in sorted_products:
+                    if len(selected_products) >= top_n:
+                        break
+                    if product_id not in selected_ids:
+                        selected_products.append((product_id, score))
+                        selected_ids.add(product_id)
             
             recommendations = []
-            for product_id, score in sorted_products:
+            for product_id, score in selected_products:
                 product_info = self.book_data[self.book_data['product_id'] == product_id].iloc[0]
                 recommendations.append({
                     'product_id': product_id,
@@ -789,6 +773,15 @@ class HybridRecommender:
                 )
                 # Loại bỏ trùng lặp và giữ lại dòng đầu tiên (tương tác có độ ưu tiên cao nhất)
                 combined = combined.drop_duplicates(subset=['customer_id', 'product_id'], keep='first')
+                
+                # Nếu sản phẩm nằm trong new_interactions, ép buộc cờ is_recent = 1 để nhận diện tương tác mới trong phiên
+                recent_pairs = set(zip(new_interactions['customer_id'].astype(str), new_interactions['product_id'].astype(str)))
+                def check_recent(row):
+                    if (str(row['customer_id']), str(row['product_id'])) in recent_pairs:
+                        return 1
+                    return row['is_recent']
+                
+                combined['is_recent'] = combined.apply(check_recent, axis=1)
                 self.reviews_data = combined[['customer_id', 'product_id', 'rating', 'is_recent']].reset_index(drop=True)
             else:
                 self.reviews_data = base_reviews.copy()

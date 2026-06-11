@@ -181,8 +181,9 @@ def load_recommender_model():
     """
     Load mô hình HybridRecommender một lần duy nhất.
     Streamlit sẽ cache kết quả để tránh phải huấn luyện lại model mỗi lần reload.
+    Phiên bản cập nhật thuật toán v6 (SVD User Normalization + Real-time learning fix).
     """
-    # Invalidate cache due to class updates (added series bonus and dynamic weights v4)
+    # Invalidate cache due to class updates (added series bonus, dynamic weights v6, and category boost)
     # Thay đổi thư mục làm việc để đảm bảo load dữ liệu đúng
     original_cwd = os.getcwd()
     os.chdir(APP_DIR)
@@ -401,9 +402,43 @@ print(f"[ĐO RAM] Sau khi Load Model và Dữ liệu: {checkpoint_2_ram:.2f} MB"
 print(f"[ĐO RAM] Tăng thêm so với Checkpoint 1: {checkpoint_2_increase:.2f} MB")
 print(f"[ĐO RAM] ================================================================\n")
 
-# Danh sách khách hàng duy nhất
-unique_customers = sorted(reviews_data['customer_id'].unique().tolist())
-customer_dict = {cid: f"Customer {cid}" for cid in unique_customers}
+# Danh sách khách hàng duy nhất, sắp xếp theo số lượng đánh giá giảm dần
+# Loại bỏ tài khoản có số lượng đánh giá ảo 'u_01e8cc1e' (667 đánh giá không có text)
+# 1. Thống kê từ dữ liệu lịch sử
+history_counts = reviews_data['customer_id'].value_counts().to_dict()
+
+# 2. Thống kê từ tương tác REVIEW trong SQLite
+sqlite_counts = {}
+try:
+    from db_utils import get_db_connection
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT customer_id, COUNT(*) as cnt 
+            FROM User_Interactions 
+            WHERE interaction_type = 'REVIEW'
+            GROUP BY customer_id
+        ''')
+        for row in cursor.fetchall():
+            cid = row['customer_id']
+            if cid is not None:
+                sqlite_counts[str(cid)] = row['cnt']
+except Exception as e:
+    print(f"⚠️ Lỗi đếm đánh giá từ SQLite: {e}")
+
+# 3. Tính tổng số lượng đánh giá cho từng khách hàng (loại bỏ 'u_01e8cc1e')
+unique_customers_raw = [cid for cid in reviews_data['customer_id'].unique().tolist() if cid != 'u_01e8cc1e']
+total_counts = {}
+for cid in unique_customers_raw:
+    total_counts[cid] = history_counts.get(cid, 0) + sqlite_counts.get(str(cid), 0)
+
+# Sắp xếp khách hàng theo số lượng đánh giá giảm dần
+unique_customers = sorted(unique_customers_raw, key=lambda x: total_counts.get(x, 0), reverse=True)
+
+# Tạo từ điển hiển thị cho selectbox (giao diện chuyên nghiệp cho luận văn, không có emoji)
+customer_dict = {cid: f"Customer {cid} ({total_counts.get(cid, 0)} đánh giá)" for cid in unique_customers}
+
+
 
 # Danh sách sách với product_id (chuẩn hóa key dạng string)
 book_dict = {str(row['product_id']).strip(): row['title'] for _, row in book_data.iterrows()}
