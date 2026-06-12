@@ -91,6 +91,10 @@ def preprocess_comments():
     
     # Xóa NaN ở 3 cột chính
     df_comments = df_comments.dropna(subset=['customer_id', 'product_id', 'rating'])
+    
+    # Loại bỏ đánh giá ảo từ FPT Shop (user u_01e8cc1e - Cao Thi My Duyen)
+    df_comments = df_comments[df_comments['customer_id'] != 'u_01e8cc1e']
+    
     print(f"   Dòng sau: {len(df_comments)}")
     print(f"   ✓ Đã xóa {dòng_ban_đầu - len(df_comments)} dòng rỗng")
     

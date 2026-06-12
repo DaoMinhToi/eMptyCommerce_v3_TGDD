@@ -64,6 +64,9 @@ def preprocess_reviews():
     df['product_id'] = df['product_id'].astype(str).str.strip()
     df['user_id'] = df['user_id'].astype(str).str.strip()
     
+    # Loại bỏ đánh giá ảo từ FPT Shop (user u_01e8cc1e - Cao Thi My Duyen)
+    df = df[df['user_id'] != 'u_01e8cc1e']
+    
     # 2. Ép kiểu rating về số
     df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
     df = df.dropna(subset=['rating'])
