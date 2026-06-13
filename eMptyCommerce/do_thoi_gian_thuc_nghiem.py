@@ -7,9 +7,9 @@ import time
 import statistics
 
 # ── Số thật từ dataset ────────────────────────────────────────
-COLD_CUSTOMER   = 99999999   # không tồn tại → Cold-Start
-WARM_CUSTOMER   = 22051463   # tồn tại, 7 ratings, avg 5.0
-NO_PROD_CUST    = 88888888   # không tồn tại, không xem gì
+COLD_CUSTOMER   = "99999999"   # không tồn tại → Cold-Start
+WARM_CUSTOMER   = "u_3a475137"   # tồn tại, có ratings trong clean_reviews.csv
+NO_PROD_CUST    = "88888888"   # không tồn tại, không xem gì
 PRODUCT_CAY_CAM = 74021317   # "Cây Cam Ngọt Của Tôi"
 N_RUNS          = 5
 

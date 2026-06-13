@@ -38,10 +38,21 @@ GENERIC_NAMES = {
 }
 
 class CellphoneSScraper:
+    # Bản đồ ánh xạ danh mục sang category ID nội bộ của CellphoneS
+    CATE_ID_MAP = {
+        'Điện thoại': '3',
+        'Laptop': '380',
+        'Máy tính bảng': '4',
+        'Đồng hồ': '610',
+        'Âm thanh': '220',
+        'Phụ kiện': '30'
+    }
+
     def __init__(self, delay=1.5, output_dir='data'):
         self.delay = delay
         self.output_dir = output_dir
         self.headers = DEFAULT_HEADERS
+        self.url_to_id = {}
         
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -52,49 +63,124 @@ class CellphoneSScraper:
 
     def get_product_links_from_category(self, category_name, category_urls, max_products=100):
         links = []
-        for url in category_urls:
-            print(f"[+] Đang quét lấy liên kết cho '{category_name}' từ CellphoneS: {url}...")
-            try:
-                res = requests.get(url, headers=self.headers, timeout=15)
-                if res.status_code != 200:
-                    print(f"    [!] Lỗi tải trang danh mục. Mã lỗi: {res.status_code}")
-                    continue
-                
-                soup = BeautifulSoup(res.text, 'html.parser')
-                page_links_count = 0
-                
-                # Danh sách các trang danh mục chính cần lọc bỏ để không nhận nhầm làm sản phẩm
-                exclude_slugs = [
-                    'mobile.html', 'tablet.html', 'laptop.html', 'phu-kien.html', 
-                    'thiet-bi-am-thanh.html', 'dong-ho-thong-minh.html', 'hang-cu.html', 
-                    'tivi.html', 'do-gia-dung.html', 'man-hinh.html', 'may-tinh-de-ban.html', 
-                    'may-in.html', 'dien-may.html', 'do-choi-cong-nghe.html', 'thu-cu-doi-moi',
-                    'danh-sach-khuyen-mai', 'sforum'
-                ]
-                
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    # Chuyển đổi thành URL tuyệt đối nếu là link tương đối
-                    full_url = urllib.parse.urljoin('https://cellphones.com.vn', href)
-                    cleaned_url = full_url.split('?')[0].split('#')[0]
-                    
-                    if cleaned_url.startswith('https://cellphones.com.vn/') and cleaned_url.endswith('.html'):
-                        slug = cleaned_url.replace('https://cellphones.com.vn/', '')
-                        
-                        # Điều kiện: Không nằm trong danh mục loại trừ và không chứa thư mục con (không chứa dấu gạch chéo '/')
-                        if '/' not in slug and slug not in exclude_slugs:
-                            if cleaned_url not in links:
-                                links.append(cleaned_url)
-                                page_links_count += 1
-                
-                print(f"    [v] Quét xong trang: Thu được {page_links_count} liên kết mới hợp lệ.")
-                self.sleep(0.5)
-                
-            except Exception as e:
-                print(f"    [!] Đã xảy ra lỗi khi lấy danh sách sản phẩm từ {url}: {e}")
+        cate_id = self.CATE_ID_MAP.get(category_name)
+        
+        # 1. Ưu tiên lấy sản phẩm qua GraphQL API (mở rộng lấy được hàng ngàn sản phẩm)
+        if cate_id:
+            print(f"[+] Đang truy vấn danh sách '{category_name}' (ID: {cate_id}) qua API GraphQL của CellphoneS...")
+            api_url = 'https://api.cellphones.com.vn/v2/graphql/query'
+            api_headers = {
+                'User-Agent': self.headers['User-Agent'],
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Origin': 'https://cellphones.com.vn',
+                'Referer': 'https://cellphones.com.vn/'
+            }
             
+            page = 1
+            size = 50  # Lấy 50 sản phẩm mỗi trang để tăng hiệu suất
+            
+            while len(links) < max_products:
+                query_payload = {
+                    "query": f"""
+                    query filterByCateAndFilter {{
+                        products(
+                            filter: {{
+                                static: {{
+                                    categories: "{cate_id}",
+                                    province_id: 30
+                                }},
+                                dynamic: {{}}
+                            }}
+                            page: {page}
+                            size: {size}
+                        ) {{
+                            general {{
+                                product_id
+                                url_path
+                            }}
+                        }}
+                    }}
+                    """
+                }
+                
+                try:
+                    res = requests.post(api_url, headers=api_headers, json=query_payload, timeout=15)
+                    if res.status_code != 200:
+                        print(f"    [!] Lỗi gọi API GraphQL (Mã lỗi: {res.status_code}) ở trang {page}")
+                        break
+                        
+                    data = res.json()
+                    products = data.get('data', {}).get('products', [])
+                    if not products:
+                        print("    [w] Không tìm thấy thêm sản phẩm nào từ API.")
+                        break
+                        
+                    page_links_count = 0
+                    for item in products:
+                        url_path = item.get('general', {}).get('url_path', '')
+                        product_id = item.get('general', {}).get('product_id', '')
+                        if url_path:
+                            # Tạo URL tuyệt đối sạch sẽ
+                            full_url = f"https://cellphones.com.vn/{url_path.lstrip('/')}"
+                            if product_id:
+                                self.url_to_id[full_url] = str(product_id)
+                            if full_url not in links:
+                                links.append(full_url)
+                                page_links_count += 1
+                                if len(links) >= max_products:
+                                    break
+                                    
+                    print(f"    [v] Trang {page}: Thu thập được {page_links_count} liên kết mới. Tổng số hiện tại: {len(links)}")
+                    page += 1
+                    self.sleep(0.5)  # Nghỉ ngắn giữa các trang API
+                    
+                except Exception as e:
+                    print(f"    [!] Đã xảy ra lỗi khi gọi GraphQL API tại trang {page}: {e}")
+                    break
+                    
+        # 2. Phương án dự phòng: cào mã HTML thô nếu không nằm trong danh mục ánh xạ API
+        if not links:
+            for url in category_urls:
+                print(f"[+] Dự phòng: Đang quét lấy liên kết cho '{category_name}' bằng cách cào HTML: {url}...")
+                try:
+                    res = requests.get(url, headers=self.headers, timeout=15)
+                    if res.status_code != 200:
+                        print(f"    [!] Lỗi tải trang danh mục. Mã lỗi: {res.status_code}")
+                        continue
+                    
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    page_links_count = 0
+                    
+                    exclude_slugs = [
+                        'mobile.html', 'tablet.html', 'laptop.html', 'phu-kien.html', 
+                        'thiet-bi-am-thanh.html', 'dong-ho-thong-minh.html', 'hang-cu.html', 
+                        'tivi.html', 'do-gia-dung.html', 'man-hinh.html', 'may-tinh-de-ban.html', 
+                        'may-in.html', 'dien-may.html', 'do-choi-cong-nghe.html', 'thu-cu-doi-moi',
+                        'danh-sach-khuyen-mai', 'sforum'
+                    ]
+                    
+                    for a in soup.find_all('a', href=True):
+                        href = a['href']
+                        full_url = urllib.parse.urljoin('https://cellphones.com.vn', href)
+                        cleaned_url = full_url.split('?')[0].split('#')[0]
+                        
+                        if cleaned_url.startswith('https://cellphones.com.vn/') and cleaned_url.endswith('.html'):
+                            slug = cleaned_url.replace('https://cellphones.com.vn/', '')
+                            if '/' not in slug and slug not in exclude_slugs:
+                                if cleaned_url not in links:
+                                    links.append(cleaned_url)
+                                    page_links_count += 1
+                                    if len(links) >= max_products:
+                                        break
+                    
+                    print(f"    [v] Quét xong trang: Thu được {page_links_count} liên kết mới hợp lệ.")
+                    self.sleep(0.5)
+                    
+                except Exception as e:
+                    print(f"    [!] Đã xảy ra lỗi khi lấy danh sách sản phẩm từ {url}: {e}")
+                
         print(f"[*] Tìm thấy tổng cộng {len(links)} sản phẩm CellphoneS cho '{category_name}'.")
-        print(f"[*] Lấy tối đa {max_products} sản phẩm để tiến hành cào chi tiết.")
         return links[:max_products]
 
     def scrape_product_details(self, product_url, category_name):
@@ -129,10 +215,25 @@ class CellphoneSScraper:
                 return None, []
             
             # Trích xuất thông tin sản phẩm
-            product_id = product_data.get('sku')
-            if not product_id:
-                slug = product_url.split('/')[-1].replace('.html', '')
-                product_id = hashlib.md5(slug.encode('utf-8')).hexdigest()[:8]
+            product_id = self.url_to_id.get(product_url)
+            if not product_id or not str(product_id).isdigit():
+                # Lấy từ SKU trong JSON-LD nếu là số
+                sku_val = product_data.get('sku')
+                if sku_val and str(sku_val).isdigit():
+                    product_id = str(sku_val)
+                else:
+                    # Fallback 1: Tìm data-product-id="(\d+)" trong mã HTML của trang
+                    id_matches = re.findall(r'data-product-id\s*=\s*["\'](\d+)["\']', res.text)
+                    if id_matches:
+                        product_id = id_matches[0]
+                    else:
+                        # Fallback 2: Tìm product_id=(\d+) trong mã HTML của trang
+                        href_matches = re.findall(r'product_id\s*=\s*(\d+)', res.text)
+                        if href_matches:
+                            product_id = href_matches[0]
+                        else:
+                            # Fallback cuối cùng: dùng sku chữ từ JSON-LD hoặc slug
+                            product_id = sku_val or product_url.split('/')[-1].replace('.html', '')
             
             title = product_data.get('name') or (soup.find('h1').text.strip() if soup.find('h1') else 'Sản phẩm không tên')
             
@@ -180,6 +281,7 @@ class CellphoneSScraper:
                     if b_name.lower() in title.lower():
                         brand = b_name
                         break
+                        
             if 'iPhone' in brand or 'iPad' in brand or 'Apple' in brand or 'MacBook' in brand:
                 brand = 'Apple'
             
@@ -193,7 +295,7 @@ class CellphoneSScraper:
             specs = " | ".join(specs_list)
             
             product_info = {
-                'product_id': product_id,
+                'product_id': str(product_id),
                 'title': title.strip(),
                 'category': category_name,
                 'price': price,
@@ -205,56 +307,154 @@ class CellphoneSScraper:
             
             # Trích xuất bình luận/đánh giá
             reviews = []
-            raw_reviews = product_data.get('review') or []
-            if isinstance(raw_reviews, dict):
-                raw_reviews = [raw_reviews]
+            
+            # 1. Ưu tiên lấy đánh giá thực tế đầy đủ qua GraphQL Reviews API
+            try:
+                pid_int = int(product_id)
+                review_api_url = 'https://api.cellphones.com.vn/graphql-customer/graphql/query'
+                review_headers = {
+                    'User-Agent': self.headers['User-Agent'],
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Origin': 'https://cellphones.com.vn',
+                    'Referer': product_url
+                }
                 
-            for rev in raw_reviews:
-                if not isinstance(rev, dict):
-                    continue
-                
-                author_name = ''
-                author_data = rev.get('author')
-                if isinstance(author_data, dict):
-                    author_name = author_data.get('name') or ''
-                elif isinstance(author_data, str):
-                    author_name = author_data
-                author_name = author_name.strip()
-                
-                # CHỐNG ĐÁNH GIÁ ẢO: Lọc bỏ hoàn toàn các đánh giá vô danh hoặc ẩn danh
-                if not author_name or author_name.lower() in GENERIC_NAMES:
-                    continue
-                
-                user_id = f"u_{hashlib.md5(author_name.encode('utf-8')).hexdigest()[:8]}"
-                
-                # CellphoneS reviews trong JSON-LD thường không kèm review body, điền mặc định nếu trống
-                review_text = rev.get('reviewBody') or rev.get('description') or 'Khách hàng không để lại ý kiến.'
-                review_text = review_text.strip()
-                
-                content_hash = hashlib.md5(f"{author_name}_{review_text}".encode('utf-8')).hexdigest()[:8]
-                review_id = f"r_{product_id}_{content_hash}"
-                
-                rating = 5
-                rating_data = rev.get('reviewRating')
-                if isinstance(rating_data, dict):
-                    try:
-                        rating = int(float(rating_data.get('ratingValue', 5)))
-                    except:
-                        rating = 5
-                
-                raw_date = rev.get('datePublished') or ''
-                date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
-                date = date.strip() or datetime.now().strftime('%Y-%m-%d')
-                
-                reviews.append({
-                    'review_id': review_id,
-                    'user_id': user_id,
-                    'product_id': product_id,
-                    'rating': rating,
-                    'review_text': review_text,
-                    'date': date
-                })
-                
+                # Quét tối đa 2 trang đánh giá (khoảng 40 bình luận) cho mỗi sản phẩm
+                for r_page in [1, 2]:
+                    review_query = {
+                        "query": f"""
+                        query REVIEWS_V2 {{
+                            reviews(
+                                filter: {{
+                                    product_id: {pid_int}
+                                }}
+                                page: {r_page}
+                            ) {{
+                                total
+                                matches {{
+                                    id
+                                    content
+                                    rating_id
+                                    created_at
+                                    customer {{
+                                        fullname
+                                    }}
+                                }}
+                            }}
+                        }}
+                        """
+                    }
+                    
+                    rev_res = requests.post(review_api_url, headers=review_headers, json=review_query, timeout=10)
+                    if rev_res.status_code == 200:
+                        rev_data = rev_res.json()
+                        matches = rev_data.get('data', {}).get('reviews', {}).get('matches', [])
+                        if not matches:
+                            break
+                            
+                        for rev in matches:
+                            author_name = rev.get('customer', {}).get('fullname', '') or ''
+                            author_name = author_name.strip()
+                            
+                            # CHỐNG ĐÁNH GIÁ ẢO
+                            if not author_name or author_name.lower() in GENERIC_NAMES:
+                                continue
+                                
+                            review_text = rev.get('content', '') or 'Khách hàng không để lại ý kiến.'
+                            review_text = review_text.strip()
+                            
+                            user_id = f"u_{hashlib.md5(author_name.encode('utf-8')).hexdigest()[:8]}"
+                            
+                            r_id_val = rev.get('id')
+                            if r_id_val:
+                                review_id = f"r_{product_id}_{r_id_val}"
+                            else:
+                                content_hash = hashlib.md5(f"{author_name}_{review_text}".encode('utf-8')).hexdigest()[:8]
+                                review_id = f"r_{product_id}_{content_hash}"
+                                
+                            rating = 5
+                            try:
+                                rating = int(rev.get('rating_id', 5))
+                            except:
+                                pass
+                                
+                            raw_date = rev.get('created_at') or ''
+                            date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
+                            date = date.strip() or datetime.now().strftime('%Y-%m-%d')
+                            
+                            review_item = {
+                                'review_id': review_id,
+                                'user_id': user_id,
+                                'product_id': str(product_id),
+                                'rating': rating,
+                                'review_text': review_text,
+                                'date': date
+                            }
+                            
+                            if not any(x['review_id'] == review_id for x in reviews):
+                                reviews.append(review_item)
+                                
+                        if len(matches) < 20:  # Đã hết đánh giá
+                            break
+                    else:
+                        break
+            except (ValueError, TypeError):
+                # ID sản phẩm không phải dạng số hoặc lỗi chuyển đổi
+                pass
+            except Exception as rev_err:
+                print(f"    [!] Lỗi khi lấy đánh giá từ GraphQL API: {rev_err}")
+
+            # 2. Phương án dự phòng: Lấy từ JSON-LD của trang nếu GraphQL không trả về gì
+            if not reviews:
+                raw_reviews = product_data.get('review') or []
+                if isinstance(raw_reviews, dict):
+                    raw_reviews = [raw_reviews]
+                    
+                for rev in raw_reviews:
+                    if not isinstance(rev, dict):
+                        continue
+                    
+                    author_name = ''
+                    author_data = rev.get('author')
+                    if isinstance(author_data, dict):
+                        author_name = author_data.get('name') or ''
+                    elif isinstance(author_data, str):
+                        author_name = author_data
+                    author_name = author_name.strip()
+                    
+                    if not author_name or author_name.lower() in GENERIC_NAMES:
+                        continue
+                    
+                    user_id = f"u_{hashlib.md5(author_name.encode('utf-8')).hexdigest()[:8]}"
+                    
+                    review_text = rev.get('reviewBody') or rev.get('description') or 'Khách hàng không để lại ý kiến.'
+                    review_text = review_text.strip()
+                    
+                    content_hash = hashlib.md5(f"{author_name}_{review_text}".encode('utf-8')).hexdigest()[:8]
+                    review_id = f"r_{product_id}_{content_hash}"
+                    
+                    rating = 5
+                    rating_data = rev.get('reviewRating')
+                    if isinstance(rating_data, dict):
+                        try:
+                            rating = int(float(rating_data.get('ratingValue', 5)))
+                        except:
+                            rating = 5
+                    
+                    raw_date = rev.get('datePublished') or ''
+                    date = raw_date.split('T')[0] if 'T' in raw_date else raw_date
+                    date = date.strip() or datetime.now().strftime('%Y-%m-%d')
+                    
+                    reviews.append({
+                        'review_id': review_id,
+                        'user_id': user_id,
+                        'product_id': str(product_id),
+                        'rating': rating,
+                        'review_text': review_text,
+                        'date': date
+                    })
+                    
             print(f"    [v] Thành công: Lấy được thông tin sản phẩm và {len(reviews)} đánh giá hợp lệ.")
             return product_info, reviews
             
@@ -276,7 +476,7 @@ class CellphoneSScraper:
         all_reviews = []
         
         print("="*60)
-        print(" BẮT ĐẦU CÀO DỮ LIỆU CELLPHONES (CELLPHONES.COM.VN)")
+        print(" BẮT ĐẦU CÀO DỮ LIỆU CELLPHONES DỰA TRÊN API GRAPHQL TỐI ƯU")
         print(f" - Số lượng sản phẩm yêu cầu tối đa/danh mục: {max_products_per_cat}")
         if target_category:
             print(f" - Danh mục mục tiêu: {target_category}")
@@ -307,7 +507,7 @@ class CellphoneSScraper:
         print(f" - File sản phẩm: {os.path.join(self.output_dir, 'products.csv')}")
         print(f" - File đánh giá: {os.path.join(self.output_dir, 'reviews.csv')}")
         print("="*60)
-
+ 
     def save_products(self, products):
         file_path = os.path.join(self.output_dir, 'products.csv')
         headers = ['product_id', 'title', 'category', 'price', 'description', 'image_url', 'brand', 'specs']
@@ -376,7 +576,7 @@ class CellphoneSScraper:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Cào dữ liệu CellphoneS cho Luận Văn Hệ thống Gợi ý")
-    parser.add_argument('--max-products', type=int, default=100, help='Số lượng sản phẩm tối đa trên mỗi danh mục (Mặc định: 100)')
+    parser.add_argument('--max-products', type=int, default=2000, help='Số lượng sản phẩm tối đa trên mỗi danh mục (Mặc định: 2000)')
     parser.add_argument('--delay', type=float, default=1.5, help='Thời gian chờ giữa các request bằng giây (Mặc định: 1.5)')
     parser.add_argument('--output-dir', type=str, default='data', help='Thư mục lưu trữ các file CSV kết quả (Mặc định: data)')
     parser.add_argument('--category', type=str, default=None, help='Chỉ cào danh mục cụ thể (Ví dụ: "Điện thoại")')
