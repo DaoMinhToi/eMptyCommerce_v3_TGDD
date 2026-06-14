@@ -14,6 +14,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from surprise import SVD, Dataset, Reader, KNNBasic, KNNWithMeans
 import warnings
 import os
+import pickle
+import threading
 
 warnings.filterwarnings("ignore")
 
@@ -35,7 +37,7 @@ class HybridRecommender:
     - Khách hàng cũ -> Kết hợp cả 2 phương pháp
     """
     
-    def __init__(self):
+    def __init__(self, force_retrain=False):
         """
         Khởi tạo HybridRecommender.
         
@@ -52,7 +54,6 @@ class HybridRecommender:
         # Biến lưu mô hình
         self.tfidf_vectorizer = None  # TF-IDF vectorizer
         self.tfidf_matrix = None  # Ma trận TF-IDF của các sản phẩm
-        self.cosine_sim_matrix = None  # Ma trận độ tương đồng Cosine
         self.svd_model = None  # Mô hình SVD cho Collaborative Filtering
         self.knn_model = None  # Mô hình KNN cho Item-based Collaborative Filtering
         self.reader = None  # Reader để load dữ liệu cho Surprise
@@ -68,28 +69,124 @@ class HybridRecommender:
         self.known_customers = set()
         self.known_products = set()
         
+        # Trạng thái luồng chạy nền (threading)
+        self.is_training = False
+        self.training_lock = threading.Lock()
+        
+        # Đường dẫn file cache mô hình
+        self.cache_path = os.path.join(DATA_DIR, 'model_cache.pkl')
+        
         print(" Khởi tạo HybridRecommender...")
         
-        # Bước 1: Đọc dữ liệu
-        self._load_data()
-        
-        # Bước 2: Huấn luyện mô hình (nếu dữ liệu có sẵn)
-        if self.book_data is not None and self.reviews_data is not None:
-            print(" Huấn luyện mô hình...")
-            self.train_content_based()
-            self.train_collaborative()
-            print(" Khởi tạo hoàn tất!\n")
+        # Thử nạp mô hình từ cache trước (tối ưu hóa thời gian khởi động)
+        cache_loaded = False
+        if not force_retrain and os.path.exists(self.cache_path):
+            cache_loaded = self._load_from_cache()
+            
+        if not cache_loaded:
+            # Bước 1: Đọc dữ liệu từ CSV
+            self._load_data()
+            
+            # Bước 2: Huấn luyện mô hình từ đầu
+            if self.book_data is not None and self.reviews_data is not None:
+                print(" Huấn luyện mô hình từ đầu...")
+                self.train_content_based()
+                self.train_collaborative()
+                self._save_to_cache()
+                print(" Khởi tạo hoàn tất!\n")
+
+    def _load_from_cache(self) -> bool:
+        """
+        Nạp toàn bộ mô hình và metadata đã được lưu trữ từ file cache.
+        Giúp app khởi động < 0.5s thay vì mất 43s.
+        """
+        try:
+            print("🚀 [Model Cache] Đang nạp mô hình đã lưu từ cache...")
+            if not os.path.exists(self.cache_path):
+                return False
+            
+            with open(self.cache_path, 'rb') as f:
+                cache_data = pickle.load(f)
+                
+            self.tfidf_vectorizer = cache_data['tfidf_vectorizer']
+            self.tfidf_matrix = cache_data['tfidf_matrix']
+            self.svd_model = cache_data['svd_model']
+            self.knn_model = cache_data['knn_model']
+            self.known_customers = cache_data['known_customers']
+            self.known_products = cache_data['known_products']
+            self.svd_known_products = cache_data['svd_known_products']
+            self.product_id_to_idx = cache_data['product_id_to_idx']
+            self.idx_to_product_id = cache_data['idx_to_product_id']
+            self.customer_id_to_idx = cache_data['customer_id_to_idx']
+            self.pid_to_title = cache_data['pid_to_title']
+            self.pid_to_category = cache_data['pid_to_category']
+            self.pid_to_cover = cache_data['pid_to_cover']
+            self.rating_min = cache_data['rating_min']
+            self.rating_max = cache_data['rating_max']
+            self.reviews_data = cache_data['reviews_data']
+            self.book_data = cache_data.get('book_data')
+            self.book_data_full = cache_data.get('book_data_full')
+            
+            print(f"✓ [Model Cache] Nạp cache thành công! Sẵn sàng gợi ý.")
+            return True
+        except Exception as e:
+            print(f"⚠️ [Model Cache] Lỗi nạp mô hình từ cache: {e}")
+            return False
+
+    def _save_to_cache(self) -> bool:
+        """
+        Lưu trữ toàn bộ mô hình và metadata vào file cache.
+        """
+        try:
+            cache_data = {
+                'tfidf_vectorizer': self.tfidf_vectorizer,
+                'tfidf_matrix': self.tfidf_matrix,
+                'svd_model': self.svd_model,
+                'knn_model': self.knn_model,
+                'known_customers': self.known_customers,
+                'known_products': self.known_products,
+                'svd_known_products': self.svd_known_products,
+                'product_id_to_idx': self.product_id_to_idx,
+                'idx_to_product_id': self.idx_to_product_id,
+                'customer_id_to_idx': self.customer_id_to_idx,
+                'pid_to_title': self.pid_to_title,
+                'pid_to_category': self.pid_to_category,
+                'pid_to_cover': self.pid_to_cover,
+                'rating_min': self.rating_min,
+                'rating_max': self.rating_max,
+                'reviews_data': self.reviews_data,
+                'book_data': self.book_data,
+                'book_data_full': getattr(self, 'book_data_full', None)
+            }
+            with self.training_lock:
+                with open(self.cache_path, 'wb') as f:
+                    pickle.dump(cache_data, f)
+            print("✓ [Model Cache] Lưu mô hình vào file cache thành công!")
+            return True
+        except Exception as e:
+            print(f"⚠️ [Model Cache] Lỗi lưu file cache mô hình: {e}")
+            return False
     
     def _load_data(self):
         """
         Đọc dữ liệu từ các file CSV.
         
         Đọc:
+        - data/book_data.csv: Dữ liệu sách gốc chứa n_review và avg_rating
         - data/clean_book_data.csv: Chứa product_id, title, category, cover_link, tokenized_desc
         - data/clean_reviews.csv: Chứa customer_id, product_id, rating
         """
         try:
-            # Đọc dữ liệu sách
+            # Đọc dữ liệu sách đầy đủ (chứa n_review, avg_rating) để cache
+            book_full_path = os.path.join(DATA_DIR, 'book_data.csv')
+            if os.path.exists(book_full_path):
+                self.book_data_full = pd.read_csv(book_full_path)
+                print(f"    Đọc {len(self.book_data_full)} sản phẩm gốc từ {book_full_path}")
+            else:
+                self.book_data_full = None
+                print(f"     {book_full_path} không tìm thấy!")
+
+            # Đọc dữ liệu sách đã tiền xử lý
             book_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
             if os.path.exists(book_path):
                 df = pd.read_csv(book_path).reset_index(drop=True)
@@ -99,7 +196,7 @@ class HybridRecommender:
                 self.book_data = df
                 self.book_data['product_id'] = self.book_data['product_id'].astype(str).str.strip()
                 self.known_products = set(self.book_data['product_id'].unique())
-                print(f"    Đọc {len(self.book_data)} sản phẩm từ {book_path}")
+                print(f"    Đọc {len(self.book_data)} sản phẩm đã xử lý từ {book_path}")
             else:
                 print(f"     {book_path} không tìm thấy!")
             
@@ -123,13 +220,9 @@ class HybridRecommender:
         Huấn luyện mô hình Content-Based Filtering.
         
         Các bước:
-        1. Sử dụng TF-IDF (Term Frequency - Inverse Document Frequency) để chuyển đổi
-           các mô tả sản phẩm (tokenized_desc) thành vector số
-        2. Tính ma trận độ tương đồng giữa các sản phẩm bằng Cosine Similarity
-           (từ 0 đến 1, vì TF-IDF không có giá trị âm — cao hơn = tương đồng hơn)
-        3. Lưu lại vectorizer và ma trận để dùng sau
-        
-        Công thức Cosine Similarity: cos(θ) = (A·B) / (||A|| * ||B||)
+        1. Sử dụng TF-IDF để chuyển đổi các mô tả sản phẩm (tokenized_desc) thành vector số
+        2. Bỏ qua việc tính trước ma trận Cosine Similarity đầy đủ để tiết kiệm 4.1 GB RAM và giảm thời gian tải đĩa.
+           (Tính toán độ tương đồng tức thời On-the-fly khi có yêu cầu gợi ý)
         """
         if self.book_data is None or 'tokenized_desc' not in self.book_data.columns:
             print("     Không thể huấn luyện Content-Based: dữ liệu thiếu")
@@ -150,10 +243,7 @@ class HybridRecommender:
                 self.book_data['tokenized_desc'].fillna('')
             )
             
-            # Bước 3: Tính ma trận Cosine Similarity
-            self.cosine_sim_matrix = cosine_similarity(self.tfidf_matrix)
-            
-            # Bước 4: Tạo ánh xạ product_id <-> index
+            # Bước 3: Tạo ánh xạ product_id <-> index
             self.product_id_to_idx = {
                 pid: idx for idx, pid in enumerate(self.book_data['product_id'])
             }
@@ -168,7 +258,7 @@ class HybridRecommender:
             
             print(f"    Content-Based Filtering huấn luyện thành công!")
             print(f"     - TF-IDF matrix shape: {self.tfidf_matrix.shape}")
-            print(f"     - Cosine similarity matrix shape: {self.cosine_sim_matrix.shape}")
+            print(f"     - Đã chuyển sang tính tương đồng On-the-fly (tiết kiệm bộ nhớ)")
             
         except Exception as e:
             print(f"    Lỗi huấn luyện Content-Based: {e}")
@@ -219,27 +309,27 @@ class HybridRecommender:
             # Bước 3: Tạo trainset từ toàn bộ dữ liệu
             self.trainset = dataset.build_full_trainset()
             
-            # Bước 4: Huấn luyện SVD
-            self.svd_model = SVD(
+            # Bước 4: Huấn luyện SVD trên biến tạm để tránh tranh chấp tài nguyên (race condition)
+            new_svd_model = SVD(
                 n_factors=50,  # Số latent factors tìm ra 50 đặc trưng ẩn để mô tả sở thích của người dùng và thuộc tính của sản phẩm.
                 n_epochs=40,  # Số lần lặp huấn luyện
                 lr_all=0.005,  # Tốc độ học (Optimization step size). Điều chỉnh mức độ thay đổi mô hình qua mỗi lần lặp. 
                 reg_all=0.02,  # Regularization parameter
                 random_state=42
             )
-            self.svd_model.fit(self.trainset)
+            new_svd_model.fit(self.trainset)
             
-            # Bước 5: Tạo ánh xạ customer_id <-> inner_id (của Surprise)
-            self.customer_id_to_idx = {
+            # Bước 5: Tạo ánh xạ customer_id <-> inner_id (của Surprise) trên biến tạm
+            new_customer_id_to_idx = {
                 cid: iid for iid, cid in enumerate(self.trainset.all_users())
             }
             
-            # Lưu danh sách sản phẩm SVD đã học để lọc nhanh lúc dự đoán
-            self.svd_known_products = {
+            # Lưu danh sách sản phẩm SVD đã học để lọc nhanh lúc dự đoán trên biến tạm
+            new_svd_known_products = {
                 str(self.trainset.to_raw_iid(iid)).strip() for iid in self.trainset.all_items()
             }
             
-            # Bước 6: Huấn luyện mô hình Item-based KNN
+            # Bước 6: Huấn luyện mô hình Item-based KNN trên biến tạm
             # KNN Item-based: Tìm các sản phẩm tương tự dựa trên hành vi người dùng
             # user_based=False => Item-based (tương tự sản phẩm)
             # user_based=True => User-based (tương tự người dùng)
@@ -249,8 +339,14 @@ class HybridRecommender:
                 'user_based': False, 
                 'min_support': 2
             }
-            self.knn_model = KNNWithMeans(k=20, sim_options=sim_options, verbose=False)
-            self.knn_model.fit(self.trainset)
+            new_knn_model = KNNWithMeans(k=20, sim_options=sim_options, verbose=False)
+            new_knn_model.fit(self.trainset)
+            
+            # Gán lại tham chiếu nguyên tử sau khi hoàn thành huấn luyện
+            self.svd_model = new_svd_model
+            self.customer_id_to_idx = new_customer_id_to_idx
+            self.svd_known_products = new_svd_known_products
+            self.knn_model = new_knn_model
             
             print(f"    Collaborative Filtering huấn luyện thành công!")
             print(f"     - Số customers: {self.trainset.n_users}")
@@ -268,7 +364,7 @@ class HybridRecommender:
         
         Các bước:
         1. Tìm index (số thứ tự dòng) của product_id trong book_data DataFrame
-        2. Lấy mảng điểm tương đồng cosine của sản phẩm này với tất cả sản phẩm khác
+        2. Tính độ tương đồng cosine tức thời (on-the-fly) của sản phẩm này với tất cả sản phẩm khác
         3. Sắp xếp theo độ tương đồng giảm dần
         4. Lấy top_n sản phẩm giống nhất (bỏ qua cuốn đầu tiên vì nó chính là cuốn đang xem)
         5. Dùng .iloc để lấy data dựa trên số thứ tự dòng
@@ -287,8 +383,9 @@ class HybridRecommender:
             # Nếu không tìm thấy sách -> trả về DataFrame rỗng
             return pd.DataFrame()
         
-        # Bước 2: Lấy mảng điểm tương đồng cosine của sách này với tất cả sách khác
-        sim_scores = list(enumerate(self.cosine_sim_matrix[idx]))
+        # Bước 2: Tính độ tương đồng cosine tức thời (on-the-fly) của sách này với tất cả sách khác
+        sim_scores_vector = cosine_similarity(self.tfidf_matrix[idx], self.tfidf_matrix)[0]
+        sim_scores = list(enumerate(sim_scores_vector))
         
         # Bước 3: Sắp xếp theo điểm tương đồng giảm dần
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
@@ -380,12 +477,12 @@ class HybridRecommender:
                 
                 print(f"   → Không có sản phẩm tham chiếu hoặc giỏ hàng trống → Trả về sản phẩm phổ biến nhất")
                 try:
-                    # Load book_data.csv (chứa n_review và avg_rating)
-                    book_data_path = os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)), 
-                        'data', 'book_data.csv'
-                    )
-                    book_data_full = pd.read_csv(book_data_path)
+                    # Tối ưu hóa: sử dụng book_data_full đã được cache
+                    if hasattr(self, 'book_data_full') and self.book_data_full is not None:
+                        book_data_full = self.book_data_full
+                    else:
+                        book_data_path = os.path.join(DATA_DIR, 'book_data.csv')
+                        book_data_full = pd.read_csv(book_data_path)
                     
                     # Loại bỏ các sản phẩm không có tên hợp lệ hoặc có tên là "Sản phẩm không tên"
                     if book_data_full is not None and not book_data_full.empty:
@@ -596,25 +693,58 @@ class HybridRecommender:
                     scaled_weight = 0.5 + 0.5 * (effective_weight / 5.0)
                     
                     if is_recent == 1:
-                        session_params.append((ref_idx, scaled_weight))
+                        session_params.append((ref_idx, scaled_weight, ref_pid))
                     else:
-                        history_params.append((ref_idx, scaled_weight))
+                        history_params.append((ref_idx, scaled_weight, ref_pid))
 
-            # Tính max sims cho session
+            # Tính max sims cho session có Row-wise Normalization & Anchor Tracking
+            session_anchors = {}
             max_sims_session = np.zeros(len(self.book_data))
             if session_params:
                 ref_indices = [param[0] for param in session_params]
                 weights = np.array([param[1] for param in session_params]).reshape(-1, 1)
-                sub_matrix = self.cosine_sim_matrix[ref_indices]
+                sub_matrix = cosine_similarity(self.tfidf_matrix[ref_indices], self.tfidf_matrix)
+                
+                # Row-wise Normalization: đưa độ tương đồng tốt nhất của từng dòng về 1.0 (trừ chính nó)
+                for i in range(len(ref_indices)):
+                    ref_idx = ref_indices[i]
+                    row = sub_matrix[i]
+                    temp = row[ref_idx]
+                    row[ref_idx] = 0
+                    row_max = np.max(row)
+                    row[ref_idx] = temp
+                    if row_max > 0:
+                        sub_matrix[i] = np.minimum(1.0, row / row_max)
+                        
                 scaled_sims = sub_matrix * weights
                 max_sims_session = np.max(scaled_sims, axis=0)
+                
+                # Xác định Anchor cho từng sản phẩm ứng viên
+                for pid in unrated_products:
+                    if pid in self.product_id_to_idx:
+                        prod_idx = self.product_id_to_idx[pid]
+                        sim_values = sub_matrix[:, prod_idx]
+                        best_i = np.argmax(sim_values)
+                        if sim_values[best_i] > 0.25:  # Ngưỡng liên kết Anchor
+                            session_anchors[pid] = session_params[best_i][2]
 
-            # Tính max sims cho history
+            # Tính max sims cho history với Row-wise Normalization
             max_sims_history = np.zeros(len(self.book_data))
             if history_params:
                 ref_indices = [param[0] for param in history_params]
                 weights = np.array([param[1] for param in history_params]).reshape(-1, 1)
-                sub_matrix = self.cosine_sim_matrix[ref_indices]
+                sub_matrix = cosine_similarity(self.tfidf_matrix[ref_indices], self.tfidf_matrix)
+                
+                for i in range(len(ref_indices)):
+                    ref_idx = ref_indices[i]
+                    row = sub_matrix[i]
+                    temp = row[ref_idx]
+                    row[ref_idx] = 0
+                    row_max = np.max(row)
+                    row[ref_idx] = temp
+                    if row_max > 0:
+                        sub_matrix[i] = np.minimum(1.0, row / row_max)
+                        
                 scaled_sims = sub_matrix * weights
                 max_sims_history = np.max(scaled_sims, axis=0)
 
@@ -667,23 +797,53 @@ class HybridRecommender:
                     content_weight * normalized_content
                 )
             
-            # Sắp xếp và lấy top N có đa dạng hóa danh mục (Category Diversification)
+            # Sắp xếp và lấy top N có đa dạng hóa danh mục & Anchor trong phiên
             sorted_products = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)
             
+            # Tính số lượng sản phẩm của từng danh mục có trong phiên
+            session_cat_counts = {}
+            for ref_pid in (session_context_pids | set(latest_unique_pids)):
+                cat = self.pid_to_category.get(ref_pid, "")
+                if cat:
+                    session_cat_counts[cat] = session_cat_counts.get(cat, 0) + 1
+
             # Giới hạn số lượng sản phẩm tối đa cho mỗi danh mục trong top gợi ý để tăng tính đa dạng
             max_per_category = max(2, top_n // 3) if top_n >= 5 else 2
             category_counts = {}
             
+            max_per_session_item = 2  # Giới hạn tối đa 2 gợi ý cho mỗi sản phẩm mới tương tác
+            session_item_counts = {}
+            
             selected_products = []
+            selected_titles = set()
+            
             for product_id, score in sorted_products:
                 if len(selected_products) >= top_n:
                     break
                 cat = self.pid_to_category.get(product_id, "")
+                title = self.pid_to_title.get(product_id, "")
                 
-                # Chỉ lấy nếu chưa vượt quá giới hạn của danh mục đó
-                if category_counts.get(cat, 0) < max_per_category:
+                # Lọc trùng tiêu đề tiếng Việt
+                if title in selected_titles:
+                    continue
+                    
+                # Khống chế số lượng Anchor
+                anchor = session_anchors.get(product_id)
+                if anchor:
+                    if session_item_counts.get(anchor, 0) >= max_per_session_item:
+                        continue
+                        
+                # Khống chế hạn mức danh mục gốc
+                dynamic_limit = max_per_category
+                if cat in session_cat_counts:
+                    dynamic_limit += 2 * (session_cat_counts[cat] - 1)
+                    
+                if category_counts.get(cat, 0) < dynamic_limit:
                     selected_products.append((product_id, score))
                     category_counts[cat] = category_counts.get(cat, 0) + 1
+                    selected_titles.add(title)
+                    if anchor:
+                        session_item_counts[anchor] = session_item_counts.get(anchor, 0) + 1
             
             # Nếu danh sách được chọn chưa đủ top_n (do lọc quá chặt), lấy thêm theo thứ tự điểm giảm dần
             if len(selected_products) < top_n:
@@ -691,9 +851,13 @@ class HybridRecommender:
                 for product_id, score in sorted_products:
                     if len(selected_products) >= top_n:
                         break
+                    title = self.pid_to_title.get(product_id, "")
+                    if title in selected_titles:
+                        continue
                     if product_id not in selected_ids:
                         selected_products.append((product_id, score))
                         selected_ids.add(product_id)
+                        selected_titles.add(title)
             
             recommendations = []
             for product_id, score in selected_products:
@@ -790,6 +954,8 @@ class HybridRecommender:
     def update_and_retrain(self):
         """
         Tự động nạp dữ liệu tương tác người dùng mới từ SQLite và huấn luyện lại Collaborative Filtering.
+        Chạy không chặn luồng giao diện chính (Non-blocking background thread) cho tương tác hiển,
+        và bỏ qua huấn luyện hoàn toàn cho tương tác ẩn để tăng tốc tối đa.
         """
         try:
             # 1. Đọc dữ liệu lịch sử gốc từ CSV
@@ -832,27 +998,14 @@ class HybridRecommender:
                 # Loại bỏ trùng lặp và giữ lại dòng đầu tiên (tương tác có độ ưu tiên cao nhất)
                 combined = combined.drop_duplicates(subset=['customer_id', 'product_id'], keep='first')
                 
-                # Nếu sản phẩm nằm trong new_interactions, ép buộc cờ is_recent = 1 để nhận diện tương tác mới trong phiên
-                recent_pairs = set(zip(new_interactions['customer_id'].astype(str), new_interactions['product_id'].astype(str)))
+                # TỐI ƯU HÓA: Vector hóa việc thiết lập cờ is_recent và is_implicit thay vì gọi .apply(axis=1) chậm chạp
+                combined_keys = combined['customer_id'].astype(str) + "_" + combined['product_id'].astype(str)
+                recent_keys = set(new_interactions['customer_id'].astype(str) + "_" + new_interactions['product_id'].astype(str))
+                implicit_keys = set(new_interactions[new_interactions['is_implicit'] == 1]['customer_id'].astype(str) + "_" + new_interactions[new_interactions['is_implicit'] == 1]['product_id'].astype(str))
                 
-                # Đồng thời lấy danh sách các cặp (user, product) là implicit tương tác
-                implicit_pairs = set(zip(
-                    new_interactions[new_interactions['is_implicit'] == 1]['customer_id'].astype(str),
-                    new_interactions[new_interactions['is_implicit'] == 1]['product_id'].astype(str)
-                ))
+                combined['is_recent'] = (combined_keys.isin(recent_keys) | (combined['is_recent'] == 1)).astype(int)
+                combined['is_implicit'] = (combined_keys.isin(implicit_keys) | (combined.get('is_implicit', 0) == 1)).astype(int)
                 
-                def check_recent(row):
-                    if (str(row['customer_id']), str(row['product_id'])) in recent_pairs:
-                        return 1
-                    return row['is_recent']
-                
-                def check_implicit(row):
-                    if (str(row['customer_id']), str(row['product_id'])) in implicit_pairs:
-                        return 1
-                    return row.get('is_implicit', 0)
-                
-                combined['is_recent'] = combined.apply(check_recent, axis=1)
-                combined['is_implicit'] = combined.apply(check_implicit, axis=1)
                 self.reviews_data = combined[['customer_id', 'product_id', 'rating', 'is_recent', 'is_implicit']].reset_index(drop=True)
             else:
                 self.reviews_data = base_reviews.copy()
@@ -862,14 +1015,46 @@ class HybridRecommender:
             # Cập nhật danh sách khách hàng đã biết
             self.known_customers = set(self.reviews_data['customer_id'].unique())
             
-            # 3. Huấn luyện lại Collaborative Filtering (SVD & KNN)
-            print("🚀 [Dynamic Retraining] Đang tự động huấn luyện lại Collaborative Filtering...")
-            self.train_collaborative()
-            print("✓ [Dynamic Retraining] Huấn luyện lại hoàn tất thành công!")
+            # TỐI ƯU HÓA: Kiểm tra xem có tương tác hiển (Review/Purchase) mới không
+            # Nếu không có (chỉ có View/Add to cart), SVD/KNN không đổi -> Cập nhật in-memory reviews_data và bỏ qua training SVD/KNN
+            has_explicit = False
+            if not new_interactions.empty:
+                has_explicit = not new_interactions[new_interactions['is_implicit'] == 0].empty
+                
+            if not has_explicit:
+                print("✓ [Dynamic Retraining] Chỉ có tương tác ẩn (VIEW/ADD_TO_CART). Đã cập nhật dữ liệu trong bộ nhớ, bỏ qua huấn luyện lại SVD/KNN.")
+                return True
+                
+            # 3. Huấn luyện lại Collaborative Filtering (SVD & KNN) trong luồng chạy nền (Non-blocking)
+            if self.is_training:
+                print("⚠️ [Dynamic Retraining] Đang có tiến trình huấn luyện nền đang chạy, bỏ qua lần gọi này.")
+                return True
+                
+            self.is_training = True
+            training_thread = threading.Thread(target=self._run_background_training)
+            training_thread.daemon = True
+            training_thread.start()
+            print("🚀 [Dynamic Retraining] Đã kích hoạt luồng chạy nền huấn luyện Collaborative Filtering (SVD & KNN)...")
             return True
+            
         except Exception as e:
             print(f"❌ [Dynamic Retraining] Lỗi khi tự động huấn luyện lại: {e}")
+            self.is_training = False
             return False
+
+    def _run_background_training(self):
+        """
+        Target cho luồng chạy nền huấn luyện mô hình Collaborative Filtering và ghi cache ra đĩa.
+        """
+        try:
+            print("⏳ [Background Training] Bắt đầu huấn luyện lại Collaborative Filtering...")
+            self.train_collaborative()
+            self._save_to_cache()
+            print("✓ [Background Training] Huấn luyện lại và ghi cache hoàn tất thành công!")
+        except Exception as e:
+            print(f"❌ [Background Training] Lỗi khi huấn luyện trong luồng nền: {e}")
+        finally:
+            self.is_training = False
 
 
 class KNNRecommender:

@@ -143,7 +143,7 @@ def handle_add_to_cart(product_id: int, title: str = ""):
             add_user_interaction(st.session_state.current_customer_id, product_id, 'ADD_TO_CART', 3.0)
             recommender_instance = load_recommender_model()
             recommender_instance.update_and_retrain()
-            st.session_state.warm_recommendations = None
+            # st.session_state.warm_recommendations = None
         
     if title:
         st.success(f"✅ Đã thêm '{title[:30]}...' vào giỏ hàng")
@@ -449,7 +449,7 @@ customer_dict = {cid: f"Customer {cid} ({total_counts.get(cid, 0)} đánh giá)"
 
 
 # Danh sách sách với product_id (chuẩn hóa key dạng string)
-book_dict = {str(row['product_id']).strip(): row['title'] for _, row in book_data.iterrows()}
+book_dict = dict(zip(book_data['product_id'].astype(str).str.strip(), book_data['title']))
 
 
 # ==================== SIDEBAR - THANH ĐIỀU HƯỚNG ====================
@@ -716,79 +716,7 @@ st.markdown(
 )
 st.markdown("---")
 
-# ========== KHỐI HIỂN THỊ ĐÁNH GIÁ CHI TIẾT KHI CLICK "XEM ĐÁNH GIÁ" ==========
-reviews_placeholder = st.empty()
-
-if st.session_state.get("selected_book_for_reviews") is not None:
-    view_book_id = st.session_state["selected_book_for_reviews"]
-    
-    # Ghi nhận tương tác VIEW và tự động huấn luyện lại mô hình nếu là khách hàng cũ
-    if st.session_state.current_customer_id is not None:
-        if st.session_state.get("last_recorded_view_book_id") != view_book_id:
-            add_user_interaction(st.session_state.current_customer_id, view_book_id, 'VIEW', 1.0)
-            recommender_instance = load_recommender_model()
-            recommender_instance.update_and_retrain()
-            st.session_state.last_recorded_view_book_id = view_book_id
-            st.session_state.warm_recommendations = None
-            
-    # Lấy thông tin sách
-    matching_books = book_data[book_data['product_id'] == view_book_id]
-    if not matching_books.empty:
-        sel_book = matching_books.iloc[0]
-        
-        with reviews_placeholder.container():
-            # Tự động cuộn lên đầu trang nếu cờ được bật
-            if st.session_state.get("should_scroll_to_top", False):
-                import streamlit.components.v1 as components
-                components.html(
-                    """
-                    <script>
-                        try {
-                            const mainContainer = window.parent.document.querySelector('.main');
-                            if (mainContainer) {
-                                mainContainer.scrollTo({top: 0, behavior: 'smooth'});
-                            } else {
-                                window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                            }
-                        } catch (e) {
-                            console.error("Scroll error:", e);
-                        }
-                    </script>
-                    """,
-                    height=0,
-                    width=0
-                )
-                st.session_state["should_scroll_to_top"] = False
-
-            # Hộp chứa thông tin sản phẩm đang được xem đánh giá
-            st.markdown(f"""
-            <div style="background: rgba(245, 166, 35, 0.1); border: 2px solid #f5a623; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
-                <h3 style="margin-top: 0; color: #f5a623; display: flex; align-items: center; gap: 8px;">
-                    <span>📱 Chi tiết đánh giá sản phẩm</span>
-                </h3>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            col_img, col_info, col_close = st.columns([1, 4, 1])
-            with col_img:
-                if pd.notna(sel_book['cover_link']) and sel_book['cover_link'] != '':
-                    st.image(sel_book['cover_link'], use_container_width=True)
-                else:
-                    st.image("https://picsum.photos/200/300?random=99", use_container_width=True)
-            with col_info:
-                st.markdown(f"### {sel_book['title']}")
-                st.markdown(f"📂 **Thể loại:** {sel_book['category']}")
-            with col_close:
-                if st.button("✕ Đóng", key="close_selected_reviews", use_container_width=True):
-                    st.session_state["selected_book_for_reviews"] = None
-                    st.rerun()
-                    
-            st.markdown("---")
-            # Gọi hàm hiển thị đánh giá
-            from ui_components import show_book_reviews
-            book_reviews = get_book_reviews_data(view_book_id)
-            show_book_reviews(view_book_id, book_reviews)
-            st.markdown("<hr style='border: 1.5px solid #f5a623; margin: 30px 0;'>", unsafe_allow_html=True)
+# ========== KHỐI HIỂN THỊ ĐÁNH GIÁ CHI TIẾT (ĐÃ DI CHUYỂN XUỐNG CUỐI TRANG ĐỂ TRÁNH RESET TABS) ==========
 
 # ========== HIỂN THỊ KẾT QUẢ TÌM KIẾM NGAY SAU HEADER ==========
 search_result_container = st.container()
@@ -1566,6 +1494,79 @@ else:
 # Chỉ hiển thị khi Gemini API sẵn có
 if GEMINI_AVAILABLE:
     render_simple_floating_button()
+
+
+# ========== KHỐI HIỂN THỊ ĐÁNH GIÁ CHI TIẾT (ĐỂ Ở CUỐI TRANG ĐỂ TRÁNH RESET TABS) ==========
+if st.session_state.get("selected_book_for_reviews") is not None:
+    view_book_id = st.session_state["selected_book_for_reviews"]
+    
+    # Ghi nhận tương tác VIEW và tự động huấn luyện lại mô hình nếu là khách hàng cũ
+    if st.session_state.current_customer_id is not None:
+        if st.session_state.get("last_recorded_view_book_id") != view_book_id:
+            add_user_interaction(st.session_state.current_customer_id, view_book_id, 'VIEW', 1.0)
+            recommender_instance = load_recommender_model()
+            recommender_instance.update_and_retrain()
+            st.session_state.last_recorded_view_book_id = view_book_id
+            
+    # Lấy thông tin sách
+    matching_books = book_data[book_data['product_id'] == view_book_id]
+    if not matching_books.empty:
+        sel_book = matching_books.iloc[0]
+        
+        st.markdown("<hr style='border: 1.5px solid #f5a623; margin: 30px 0;'>", unsafe_allow_html=True)
+        
+        # Tự động cuộn xuống cuối trang nếu cờ được bật
+        if st.session_state.get("should_scroll_to_top", False):
+            import streamlit.components.v1 as components
+            components.html(
+                """
+                <script>
+                    try {
+                        const mainContainer = window.parent.document.querySelector('.main');
+                        if (mainContainer) {
+                            mainContainer.scrollTo({top: mainContainer.scrollHeight, behavior: 'smooth'});
+                        } else {
+                            window.parent.scrollTo({top: window.parent.document.body.scrollHeight, behavior: 'smooth'});
+                        }
+                    } catch (e) {
+                        console.error("Scroll error:", e);
+                    }
+                </script>
+                """,
+                height=0,
+                width=0
+            )
+            st.session_state["should_scroll_to_top"] = False
+
+        # Hộp chứa thông tin sản phẩm đang được xem đánh giá
+        st.markdown(f"""
+        <div style="background: rgba(245, 166, 35, 0.1); border: 2px solid #f5a623; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+            <h3 style="margin-top: 0; color: #f5a623; display: flex; align-items: center; gap: 8px;">
+                <span>📱 Chi tiết đánh giá sản phẩm</span>
+            </h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_img, col_info, col_close = st.columns([1, 4, 1])
+        with col_img:
+            if pd.notna(sel_book['cover_link']) and sel_book['cover_link'] != '':
+                st.image(sel_book['cover_link'], use_container_width=True)
+            else:
+                st.image("https://picsum.photos/200/300?random=99", use_container_width=True)
+        with col_info:
+            st.markdown(f"### {sel_book['title']}")
+            st.markdown(f"📂 **Thể loại:** {sel_book['category']}")
+        with col_close:
+            if st.button("✕ Đóng", key="close_selected_reviews", use_container_width=True):
+                st.session_state["selected_book_for_reviews"] = None
+                st.rerun()
+                
+        st.markdown("---")
+        # Gọi hàm hiển thị đánh giá
+        from ui_components import show_book_reviews
+        book_reviews = get_book_reviews_data(view_book_id)
+        show_book_reviews(view_book_id, book_reviews)
+        st.markdown("<hr style='border: 1.5px solid #f5a623; margin: 30px 0;'>", unsafe_allow_html=True)
 
 
 # ==================== FOOTER ====================
