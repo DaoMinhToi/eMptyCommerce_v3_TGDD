@@ -224,18 +224,35 @@ def load_reviews_data():
         return None
 
 
+@st.cache_resource
+def load_raw_reviews_df():
+    """
+    Tải toàn bộ file reviews.csv vào RAM và lưu trữ dưới dạng st.cache_resource.
+    Giúp tăng tốc truy vấn bình luận cho từng sản phẩm và thông tin khách hàng từ ~1s xuống <1ms.
+    """
+    reviews_csv_path = os.path.join(DATA_DIR, 'reviews.csv')
+    if os.path.exists(reviews_csv_path):
+        try:
+            df = pd.read_csv(reviews_csv_path)
+            df['product_id'] = df['product_id'].astype(str).str.strip()
+            if 'user_id' in df.columns:
+                df['user_id'] = df['user_id'].astype(str).str.strip()
+            return df
+        except Exception as e:
+            print(f"⚠️ Lỗi đọc file reviews.csv: {e}")
+            return None
+    return None
+
+
 @st.cache_data
 def get_book_reviews_data(book_id) -> list[dict]:
     """
     Đọc dữ liệu comments từ reviews.csv hoặc comments.csv và lọc theo product_id (book_id).
     """
     try:
-        # Ưu tiên đọc reviews.csv của TGDD trước
-        reviews_csv_path = os.path.join(DATA_DIR, 'reviews.csv')
-        if os.path.exists(reviews_csv_path):
-            df_reviews = pd.read_csv(reviews_csv_path)
-            # Ép kiểu product_id về string để so khớp chính xác
-            df_reviews['product_id'] = df_reviews['product_id'].astype(str).str.strip()
+        # Ưu tiên đọc reviews.csv của TGDD trước (đã được cache trong bộ nhớ RAM)
+        df_reviews = load_raw_reviews_df()
+        if df_reviews is not None:
             df_filtered = df_reviews[df_reviews['product_id'] == str(book_id).strip()]
             
             reviews_list = []
@@ -369,9 +386,8 @@ def get_explicit_reviews_for_customer(customer_id, reviews_df):
         try:
             history_mask = customer_reviews['source'] == 'history'
             if history_mask.any():
-                reviews_csv_path = os.path.join(DATA_DIR, 'reviews.csv')
-                if os.path.exists(reviews_csv_path):
-                    df_raw_reviews = pd.read_csv(reviews_csv_path)
+                df_raw_reviews = load_raw_reviews_df()
+                if df_raw_reviews is not None:
                     user_raw = df_raw_reviews[df_raw_reviews['user_id'] == customer_id]
                     if not user_raw.empty:
                         date_map = dict(zip(user_raw['product_id'].astype(str).str.strip(), user_raw['date']))

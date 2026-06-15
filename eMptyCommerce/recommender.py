@@ -75,6 +75,7 @@ class HybridRecommender:
         
         # Đường dẫn file cache mô hình
         self.cache_path = os.path.join(DATA_DIR, 'model_cache.pkl')
+        self.knn_cache_path = os.path.join(DATA_DIR, 'knn_cache.pkl')
         
         print(" Khởi tạo HybridRecommender...")
         
@@ -91,8 +92,15 @@ class HybridRecommender:
             if self.book_data is not None and self.reviews_data is not None:
                 print(" Huấn luyện mô hình từ đầu...")
                 self.train_content_based()
-                self.train_collaborative()
-                self._save_to_cache()
+                
+                # Khởi tạo số lượng tương tác hiển lúc bắt đầu
+                if 'is_implicit' in self.reviews_data.columns:
+                    self.last_trained_explicit_count = len(self.reviews_data[self.reviews_data['is_implicit'] == 0])
+                else:
+                    self.last_trained_explicit_count = len(self.reviews_data)
+                    
+                self.train_collaborative(train_knn=True)
+                self._save_to_cache(save_knn=True)
                 print(" Khởi tạo hoàn tất!\n")
 
     def _load_from_cache(self) -> bool:
@@ -111,7 +119,6 @@ class HybridRecommender:
             self.tfidf_vectorizer = cache_data['tfidf_vectorizer']
             self.tfidf_matrix = cache_data['tfidf_matrix']
             self.svd_model = cache_data['svd_model']
-            self.knn_model = cache_data['knn_model']
             self.known_customers = cache_data['known_customers']
             self.known_products = cache_data['known_products']
             self.svd_known_products = cache_data['svd_known_products']
@@ -126,6 +133,16 @@ class HybridRecommender:
             self.reviews_data = cache_data['reviews_data']
             self.book_data = cache_data.get('book_data')
             self.book_data_full = cache_data.get('book_data_full')
+            self.last_trained_explicit_count = cache_data.get('last_trained_explicit_count', 0)
+            
+            # Nạp KNN từ file cache riêng biệt hoặc từ file cache cũ (nếu có)
+            if os.path.exists(self.knn_cache_path):
+                print("🚀 [KNN Cache] Đang nạp mô hình KNN từ cache riêng...")
+                with open(self.knn_cache_path, 'rb') as f:
+                    knn_data = pickle.load(f)
+                self.knn_model = knn_data.get('knn_model')
+            else:
+                self.knn_model = cache_data.get('knn_model')
             
             print(f"✓ [Model Cache] Nạp cache thành công! Sẵn sàng gợi ý.")
             return True
@@ -133,7 +150,7 @@ class HybridRecommender:
             print(f"⚠️ [Model Cache] Lỗi nạp mô hình từ cache: {e}")
             return False
 
-    def _save_to_cache(self) -> bool:
+    def _save_to_cache(self, save_knn=True) -> bool:
         """
         Lưu trữ toàn bộ mô hình và metadata vào file cache.
         """
@@ -142,7 +159,6 @@ class HybridRecommender:
                 'tfidf_vectorizer': self.tfidf_vectorizer,
                 'tfidf_matrix': self.tfidf_matrix,
                 'svd_model': self.svd_model,
-                'knn_model': self.knn_model,
                 'known_customers': self.known_customers,
                 'known_products': self.known_products,
                 'svd_known_products': self.svd_known_products,
@@ -156,12 +172,23 @@ class HybridRecommender:
                 'rating_max': self.rating_max,
                 'reviews_data': self.reviews_data,
                 'book_data': self.book_data,
-                'book_data_full': getattr(self, 'book_data_full', None)
+                'book_data_full': getattr(self, 'book_data_full', None),
+                'last_trained_explicit_count': getattr(self, 'last_trained_explicit_count', 0)
             }
+            
+            # Lưu KNN vào file cache riêng biệt (để tránh làm phình to model_cache.pkl)
+            if save_knn and self.knn_model is not None:
+                print("⏳ [KNN Cache] Đang lưu mô hình KNN khổng lồ...")
+                with self.training_lock:
+                    with open(self.knn_cache_path, 'wb') as f:
+                        pickle.dump({'knn_model': self.knn_model}, f)
+                print("✓ [KNN Cache] Lưu mô hình KNN thành công!")
+                
+            # Lưu các phần khác (luôn loại bỏ KNN để model_cache.pkl siêu nhẹ ~25MB)
             with self.training_lock:
                 with open(self.cache_path, 'wb') as f:
                     pickle.dump(cache_data, f)
-            print("✓ [Model Cache] Lưu mô hình vào file cache thành công!")
+            print("✓ [Model Cache] Lưu mô hình SVD & Metadata hoàn tất!")
             return True
         except Exception as e:
             print(f"⚠️ [Model Cache] Lỗi lưu file cache mô hình: {e}")
@@ -263,7 +290,7 @@ class HybridRecommender:
         except Exception as e:
             print(f"    Lỗi huấn luyện Content-Based: {e}")
     
-    def train_collaborative(self):
+    def train_collaborative(self, train_knn=True):
         """
         Huấn luyện mô hình Collaborative Filtering (CF).
         
@@ -300,7 +327,7 @@ class HybridRecommender:
                 svd_train_df = self.reviews_data[self.reviews_data['is_implicit'] == 0]
             else:
                 svd_train_df = self.reviews_data
-                
+            
             dataset = Dataset.load_from_df(
                 svd_train_df[['customer_id', 'product_id', 'rating']],
                 reader=self.reader
@@ -329,31 +356,37 @@ class HybridRecommender:
                 str(self.trainset.to_raw_iid(iid)).strip() for iid in self.trainset.all_items()
             }
             
-            # Bước 6: Huấn luyện mô hình Item-based KNN trên biến tạm
-            # KNN Item-based: Tìm các sản phẩm tương tự dựa trên hành vi người dùng
-            # user_based=False => Item-based (tương tự sản phẩm)
-            # user_based=True => User-based (tương tự người dùng)
-            # min_support: Yêu cầu ít nhất 2 người cùng đánh giá 2 item thì mới tính similarity
-            sim_options = {
-                'name': 'cosine', 
-                'user_based': False, 
-                'min_support': 2
-            }
-            new_knn_model = KNNWithMeans(k=20, sim_options=sim_options, verbose=False)
-            new_knn_model.fit(self.trainset)
-            
-            # Gán lại tham chiếu nguyên tử sau khi hoàn thành huấn luyện
+            # Gán lại các thuộc tính SVD/metadata nguyên tử
             self.svd_model = new_svd_model
             self.customer_id_to_idx = new_customer_id_to_idx
             self.svd_known_products = new_svd_known_products
-            self.knn_model = new_knn_model
             
-            print(f"    Collaborative Filtering huấn luyện thành công!")
+            print(f"    SVD Collaborative Filtering huấn luyện thành công!")
             print(f"     - Số customers: {self.trainset.n_users}")
             print(f"     - Số products: {self.trainset.n_items}")
             print(f"     - Số ratings: {self.trainset.n_ratings}")
             print(f"     - Rating scale: {rating_min} - {rating_max}")
-            print(f"    Item-based KNN huấn luyện thành công!")
+            
+            # Bước 6: Huấn luyện mô hình Item-based KNN trên biến tạm chỉ khi được yêu cầu
+            if train_knn:
+                print("    Đang huấn luyện Item-based KNN (Quá trình này tốn nhiều tài nguyên)...")
+                # KNN Item-based: Tìm các sản phẩm tương tự dựa trên hành vi người dùng
+                # user_based=False => Item-based (tương tự sản phẩm)
+                # user_based=True => User-based (tương tự người dùng)
+                # min_support: Yêu cầu ít nhất 2 người cùng đánh giá 2 item thì mới tính similarity
+                sim_options = {
+                    'name': 'cosine', 
+                    'user_based': False, 
+                    'min_support': 2
+                }
+                new_knn_model = KNNWithMeans(k=20, sim_options=sim_options, verbose=False)
+                new_knn_model.fit(self.trainset)
+                
+                # Gán lại tham chiếu nguyên tử sau khi hoàn thành huấn luyện
+                self.knn_model = new_knn_model
+                print(f"    Item-based KNN huấn luyện thành công!")
+            else:
+                print("    [Skipped] Bỏ qua huấn luyện Item-based KNN để tăng hiệu năng.")
             
         except Exception as e:
             print(f"    Lỗi huấn luyện Collaborative Filtering: {e}")
@@ -1015,14 +1048,18 @@ class HybridRecommender:
             # Cập nhật danh sách khách hàng đã biết
             self.known_customers = set(self.reviews_data['customer_id'].unique())
             
-            # TỐI ƯU HÓA: Kiểm tra xem có tương tác hiển (Review/Purchase) mới không
-            # Nếu không có (chỉ có View/Add to cart), SVD/KNN không đổi -> Cập nhật in-memory reviews_data và bỏ qua training SVD/KNN
-            has_explicit = False
-            if not new_interactions.empty:
-                has_explicit = not new_interactions[new_interactions['is_implicit'] == 0].empty
+            # TỐI ƯU HÓA: Kiểm tra số lượng tương tác hiển (Review/Purchase) mới trong SQLite
+            current_explicit_count = 0
+            if self.reviews_data is not None:
+                if 'is_implicit' in self.reviews_data.columns:
+                    current_explicit_count = len(self.reviews_data[self.reviews_data['is_implicit'] == 0])
+                else:
+                    current_explicit_count = len(self.reviews_data)
                 
-            if not has_explicit:
-                print("✓ [Dynamic Retraining] Chỉ có tương tác ẩn (VIEW/ADD_TO_CART). Đã cập nhật dữ liệu trong bộ nhớ, bỏ qua huấn luyện lại SVD/KNN.")
+            # So sánh với số lượng tại thời điểm huấn luyện gần nhất
+            last_count = getattr(self, 'last_trained_explicit_count', 0)
+            if current_explicit_count <= last_count:
+                print(f"✓ [Dynamic Retraining] Không có tương tác hiển mới ({current_explicit_count} <= {last_count}). Đã cập nhật dữ liệu trong bộ nhớ, bỏ qua huấn luyện lại SVD/KNN.")
                 return True
                 
             # 3. Huấn luyện lại Collaborative Filtering (SVD & KNN) trong luồng chạy nền (Non-blocking)
@@ -1034,7 +1071,7 @@ class HybridRecommender:
             training_thread = threading.Thread(target=self._run_background_training)
             training_thread.daemon = True
             training_thread.start()
-            print("🚀 [Dynamic Retraining] Đã kích hoạt luồng chạy nền huấn luyện Collaborative Filtering (SVD & KNN)...")
+            print("🚀 [Dynamic Retraining] Đã kích hoạt luồng chạy nền huấn luyện Collaborative Filtering (SVD)...")
             return True
             
         except Exception as e:
@@ -1047,10 +1084,15 @@ class HybridRecommender:
         Target cho luồng chạy nền huấn luyện mô hình Collaborative Filtering và ghi cache ra đĩa.
         """
         try:
-            print("⏳ [Background Training] Bắt đầu huấn luyện lại Collaborative Filtering...")
-            self.train_collaborative()
-            self._save_to_cache()
-            print("✓ [Background Training] Huấn luyện lại và ghi cache hoàn tất thành công!")
+            print("⏳ [Background Training] Bắt đầu huấn luyện lại Collaborative Filtering (SVD)...")
+            if self.reviews_data is not None:
+                if 'is_implicit' in self.reviews_data.columns:
+                    self.last_trained_explicit_count = len(self.reviews_data[self.reviews_data['is_implicit'] == 0])
+                else:
+                    self.last_trained_explicit_count = len(self.reviews_data)
+            self.train_collaborative(train_knn=False)
+            self._save_to_cache(save_knn=False)
+            print("✓ [Background Training] Huấn luyện lại SVD và ghi cache hoàn tất thành công!")
         except Exception as e:
             print(f"❌ [Background Training] Lỗi khi huấn luyện trong luồng nền: {e}")
         finally:

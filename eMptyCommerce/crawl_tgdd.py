@@ -45,82 +45,214 @@ class TGDDScraper:
         """Tạm dừng giữa các request để lịch sự và tránh bị block"""
         time.sleep(custom_delay if custom_delay is not None else self.delay)
 
+    def get_category_id(self, url):
+        """
+        Tự động nhận diện Category ID từ URL của Thế Giới Di Động.
+        """
+        # Trích xuất slug cuối cùng
+        slug = url.split('/')[-1]
+        
+        # Dữ liệu hardcoded dự phòng cho các danh mục chính
+        FALLBACK_CATE_IDS = {
+            'dtdd': 42,
+            'laptop': 44,
+            'may-tinh-bang': 522,
+            'dong-ho-thong-minh': 7077,
+            'dong-ho-deo-tay': 7264,
+            'tai-nghe': 54,
+            'loa': 2162,
+            'phu-kien': 382,
+        }
+        
+        # 1. Thử khớp với slug dự phòng trước
+        for key, cat_id in FALLBACK_CATE_IDS.items():
+            if key in slug.lower():
+                return cat_id
+
+        # 2. Nếu không có trong danh mục dự phòng, gửi request GET để phân tích HTML
+        print(f"    [*] Đang phân tích ID danh mục từ: {url}...")
+        try:
+            res = requests.get(url, headers=self.headers, timeout=10)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                # Check listproduct elements for __cate_XXX class
+                list_prod = soup.find('ul', class_='listproduct')
+                if list_prod:
+                    items = list_prod.find_all('li', class_=True)
+                    for item in items:
+                        for cls in item['class']:
+                            if cls.startswith('__cate_'):
+                                cat_id = int(cls.split('_')[-1])
+                                print(f"    [v] Đã phát hiện Category ID từ li class: {cat_id}")
+                                return cat_id
+                                
+                # Check scripts for cateID or categoryId
+                scripts = soup.find_all('script')
+                for script in scripts:
+                    content = script.string or ''
+                    m = re.search(r'\b(cateID|categoryId)\b\s*[:=]\s*(\d+)', content, re.I)
+                    if m:
+                        cat_id = int(m.group(2))
+                        print(f"    [v] Đã phát hiện Category ID từ javascript: {cat_id}")
+                        return cat_id
+        except Exception as e:
+            print(f"    [!] Lỗi khi tự động nhận diện ID danh mục: {e}")
+            
+        return None
+
     def get_product_links_from_category(self, category_name, category_urls, max_products=100):
         """
-        Lấy danh sách link chi tiết sản phẩm từ danh sách các trang danh mục & thương hiệu
+        Lấy danh sách link chi tiết sản phẩm qua API phân trang AJAX hoặc dự phòng cào HTML.
         """
         links = []
         for url in category_urls:
             print(f"[+] Đang quét lấy liên kết cho '{category_name}' từ: {url}...")
-            try:
-                res = requests.get(url, headers=self.headers, timeout=15)
-                if res.status_code != 200:
-                    print(f"    [!] Lỗi tải trang danh mục. Mã lỗi: {res.status_code}")
-                    continue
-                
-                soup = BeautifulSoup(res.text, 'html.parser')
-                page_links_count = 0
-                
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    # Xác định các liên kết sản phẩm dựa trên danh mục tương ứng
-                    is_valid_link = False
-                    if category_name == 'Điện thoại' and '/dtdd/' in href:
-                        is_valid_link = True
-                    elif category_name == 'Laptop' and '/laptop/' in href:
-                        is_valid_link = True
-                    elif category_name == 'Máy tính bảng' and '/may-tinh-bang/' in href:
-                        is_valid_link = True
-                    elif category_name == 'Đồng hồ' and any(kw in href for kw in ['/dong-ho-thong-minh/', '/dong-ho-deo-tay/']):
-                        is_valid_link = True
-                    elif category_name == 'Âm thanh' and any(kw in href for kw in ['/tai-nghe/', '/loa/', '/loa-laptop/']):
-                        is_valid_link = True
-                    elif category_name == 'Phụ kiện' and any(kw in href for kw in [
-                        '/loa-laptop/', '/sac-dtdd/', '/camera-giam-sat/', '/tai-nghe/', 
-                        '/chuot-ban-phim/', '/ban-phim/', '/chuot/', '/op-lung-', 
-                        '/mieng-dan-man-hinh/', '/cap-dien-thoai/', '/pin-sac-du-phong/', 
-                        '/the-nho-dien-thoai/', '/usb/', '/o-cung-di-dong/', '/balo-tui-chong-soc/',
-                        '/gia-do-dien-thoai/', '/phu-kien-apple/', '/phu-kien-di-dong/'
-                    ]):
-                        is_valid_link = True
-                    
-                    if is_valid_link:
-                        # Chuyển đổi thành URL tuyệt đối
-                        full_url = urllib.parse.urljoin('https://www.thegioididong.com', href)
-                        # Bỏ các tham số UTM hoặc query
-                        cleaned_url = full_url.split('?')[0]
-                        if cleaned_url not in links:
-                            links.append(cleaned_url)
-                            page_links_count += 1
-                
-                print(f"    [v] Quét xong trang: Thu được {page_links_count} liên kết mới.")
-                # Tạm nghỉ ngắn giữa các trang danh mục để an toàn
-                self.sleep(0.5)
-                
-            except Exception as e:
-                print(f"    [!] Đã xảy ra lỗi khi lấy danh sách sản phẩm từ {url}: {e}")
             
-        # Lọc bớt các link rác
-        filtered_links = []
-        for link in links:
-            slug = link.split('/')[-1]
-            if slug and slug not in [
-                'dtdd', 'laptop', 'may-tinh-bang', 'dong-ho-thong-minh', 'dong-ho-deo-tay', 
-                'tai-nghe', 'loa', 'phu-kien', 'cap-dien-thoai', 'chuot-ban-phim', 'tin-tuc', 
-                'so-sanh', 'chinh-sach', 'pin-sac-du-phong', 'sac-dtdd', 'op-lung-flipcover', 
-                'chuot', 'ban-phim', 'mieng-dan-man-hinh', 'the-nho-dien-thoai', 'usb', 
-                'o-cung-di-dong', 'balo-tui-chong-soc', 'phu-kien-di-dong', 'thiet-bi-nha-thong-minh', 
-                'camera-giam-sat'
-            ]:
-                filtered_links.append(link)
-        
-        print(f"[*] Tìm thấy tổng cộng {len(filtered_links)} sản phẩm duy nhất cho danh mục '{category_name}'.")
+            # Tự động phát hiện Category ID
+            cate_id = self.get_category_id(url)
+            
+            if cate_id:
+                print(f"    [+] Bắt đầu cào sản phẩm qua API FilterProductBox (Category ID: {cate_id})...")
+                page = 0
+                api_url = 'https://www.thegioididong.com/Category/FilterProductBox'
+                headers = {
+                    'User-Agent': self.headers['User-Agent'],
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': url,
+                }
+                
+                while len(links) < max_products:
+                    params = {
+                        'c': cate_id,
+                        'pi': page,
+                        'ps': 20
+                    }
+                    data = {
+                        'IsParentCate': 'false',
+                        'prevent': 'true'
+                    }
+                    
+                    try:
+                        res = requests.post(api_url, params=params, data=data, headers=headers, timeout=15)
+                        if res.status_code != 200:
+                            print(f"    [!] Lỗi tải trang danh mục qua API ở trang {page}. Mã lỗi: {res.status_code}")
+                            break
+                            
+                        res_json = res.json()
+                        list_html = res_json.get('listproducts', '')
+                        if not list_html or list_html.strip() == '':
+                            print(f"    [w] Hết sản phẩm ở trang {page}.")
+                            break
+                            
+                        soup = BeautifulSoup(list_html, 'html.parser')
+                        page_links_count = 0
+                        
+                        for a in soup.find_all('a', href=True):
+                            href = a['href']
+                            if href.startswith('javascript:'):
+                                continue
+                                
+                            full_url = urllib.parse.urljoin('https://www.thegioididong.com', href)
+                            cleaned_url = full_url.split('?')[0]
+                            
+                            if cleaned_url.startswith('http') and cleaned_url not in links:
+                                # Loại trừ các trang danh mục gốc
+                                slug = cleaned_url.split('/')[-1]
+                                if slug and slug not in [
+                                    'dtdd', 'laptop', 'may-tinh-bang', 'dong-ho-thong-minh', 'dong-ho-deo-tay', 
+                                    'tai-nghe', 'loa', 'phu-kien', 'cap-dien-thoai', 'chuot-ban-phim', 'tin-tuc', 
+                                    'so-sanh', 'chinh-sach', 'pin-sac-du-phong', 'sac-dtdd', 'op-lung-flipcover', 
+                                    'chuot', 'ban-phim', 'mieng-dan-man-hinh', 'the-nho-dien-thoai', 'usb', 
+                                    'o-cung-di-dong', 'balo-tui-chong-soc', 'phu-kien-di-dong', 'thiet-bi-nha-thong-minh', 
+                                    'camera-giam-sat'
+                                ]:
+                                    links.append(cleaned_url)
+                                    page_links_count += 1
+                                    if len(links) >= max_products:
+                                        break
+                                        
+                        print(f"    [v] Trang API {page}: Thu được {page_links_count} liên kết mới. Tổng số hiện tại: {len(links)}")
+                        if page_links_count == 0:
+                            print(f"    [w] Không tìm thấy thêm liên kết mới nào ở trang {page}. Dừng.")
+                            break
+                            
+                        page += 1
+                        self.sleep(0.5)
+                        
+                    except Exception as e:
+                        print(f"    [!] Đã xảy ra lỗi khi gọi API ở trang {page}: {e}")
+                        break
+            else:
+                # Dự phòng: cào HTML tĩnh nếu không nhận diện được Category ID
+                print("    [!] Không nhận diện được Category ID. Chuyển sang cào HTML tĩnh dự phòng...")
+                try:
+                    res = requests.get(url, headers=self.headers, timeout=15)
+                    if res.status_code != 200:
+                        print(f"    [!] Lỗi tải trang danh mục. Mã lỗi: {res.status_code}")
+                        continue
+                    
+                    soup = BeautifulSoup(res.text, 'html.parser')
+                    page_links_count = 0
+                    
+                    for a in soup.find_all('a', href=True):
+                        href = a['href']
+                        if href.startswith('javascript:'):
+                            continue
+                            
+                        is_valid_link = False
+                        if category_name == 'Điện thoại' and '/dtdd/' in href:
+                            is_valid_link = True
+                        elif category_name == 'Laptop' and '/laptop/' in href:
+                            is_valid_link = True
+                        elif category_name == 'Máy tính bảng' and '/may-tinh-bang/' in href:
+                            is_valid_link = True
+                        elif category_name == 'Đồng hồ' and any(kw in href for kw in ['/dong-ho-thong-minh/', '/dong-ho-deo-tay/']):
+                            is_valid_link = True
+                        elif category_name == 'Âm thanh' and any(kw in href for kw in ['/tai-nghe/', '/loa/', '/loa-laptop/']):
+                            is_valid_link = True
+                        elif category_name == 'Phụ kiện' and any(kw in href for kw in [
+                            '/loa-laptop/', '/sac-dtdd/', '/camera-giam-sat/', '/tai-nghe/', 
+                            '/chuot-ban-phim/', '/ban-phim/', '/chuot/', '/op-lung-', 
+                            '/mieng-dan-man-hinh/', '/cap-dien-thoai/', '/pin-sac-du-phong/', 
+                            '/the-nho-dien-thoai/', '/usb/', '/o-cung-di-dong/', '/balo-tui-chong-soc/',
+                            '/gia-do-dien-thoai/', '/phu-kien-apple/', '/phu-kien-di-dong/'
+                        ]):
+                            is_valid_link = True
+                        
+                        if is_valid_link:
+                            full_url = urllib.parse.urljoin('https://www.thegioididong.com', href)
+                            cleaned_url = full_url.split('?')[0]
+                            if cleaned_url.startswith('http') and cleaned_url not in links:
+                                slug = cleaned_url.split('/')[-1]
+                                if slug and slug not in [
+                                    'dtdd', 'laptop', 'may-tinh-bang', 'dong-ho-thong-minh', 'dong-ho-deo-tay', 
+                                    'tai-nghe', 'loa', 'phu-kien', 'cap-dien-thoai', 'chuot-ban-phim', 'tin-tuc', 
+                                    'so-sanh', 'chinh-sach', 'pin-sac-du-phong', 'sac-dtdd', 'op-lung-flipcover', 
+                                    'chuot', 'ban-phim', 'mieng-dan-man-hinh', 'the-nho-dien-thoai', 'usb', 
+                                    'o-cung-di-dong', 'balo-tui-chong-soc', 'phu-kien-di-dong', 'thiet-bi-nha-thong-minh', 
+                                    'camera-giam-sat'
+                                ]:
+                                    links.append(cleaned_url)
+                                    page_links_count += 1
+                                    if len(links) >= max_products:
+                                        break
+                    
+                    print(f"    [v] Quét xong trang HTML tĩnh: Thu được {page_links_count} liên kết mới.")
+                    self.sleep(0.5)
+                    
+                except Exception as e:
+                    print(f"    [!] Đã xảy ra lỗi khi lấy danh sách sản phẩm từ {url}: {e}")
+            
+        print(f"[*] Tìm thấy tổng cộng {len(links)} sản phẩm duy nhất cho danh mục '{category_name}'.")
         print(f"[*] Lấy tối đa {max_products} sản phẩm để tiến hành cào chi tiết.")
-        return filtered_links[:max_products]
+        return links[:max_products]
 
     def scrape_product_details(self, product_url, category_name):
         """
-        Scrape thông tin chi tiết và đánh giá từ trang sản phẩm qua JSON-LD
+        Scrape thông tin chi tiết và đánh giá từ trang sản phẩm qua JSON-LD và Reviews API
         """
         print(f"  -> Đang cào dữ liệu từ: {product_url}")
         try:
@@ -145,8 +277,8 @@ class TGDDScraper:
                                 break
                     elif isinstance(js_data, dict):
                         if js_data.get('@type') == 'Product' or 'sku' in js_data:
-                            product_data = js_data
-                            break
+                             product_data = js_data
+                             break
                 except:
                     continue
             
@@ -235,6 +367,8 @@ class TGDDScraper:
             
             # 3. Trích xuất bình luận/đánh giá
             reviews = []
+            
+            # 3.1. Trích xuất bình luận từ JSON-LD của trang sản phẩm
             raw_reviews = product_data.get('review') or []
             if isinstance(raw_reviews, dict):
                 raw_reviews = [raw_reviews]
@@ -285,6 +419,126 @@ class TGDDScraper:
                     'date': date
                 })
                 
+            # 3.2. Cào thêm đánh giá thực tế qua API PagingAllRating của Thế Giới Di Động
+            try:
+                if str(product_id).isdigit():
+                    num_pid = int(product_id)
+                    api_rev_url = 'https://www.thegioididong.com/comment/PagingAllRating'
+                    rev_headers = {
+                        'User-Agent': self.headers['User-Agent'],
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'Referer': product_url,
+                    }
+                    
+                    # Quét tối đa 2 trang đánh giá (40 đánh giá)
+                    for r_page in [1, 2]:
+                        payload = {
+                            'ctid': num_pid,
+                            'page': r_page,
+                            'score': 0,
+                            'order': 0,
+                            'hasImg': 'false',
+                            'ismb': 'false'
+                        }
+                        
+                        rev_res = requests.post(api_rev_url, data=payload, headers=rev_headers, timeout=10)
+                        if rev_res.status_code == 200 and rev_res.text:
+                            rev_soup = BeautifulSoup(rev_res.text, 'html.parser')
+                            items = rev_soup.find_all('li', class_='par')
+                            if not items:
+                                break
+                                
+                            for item in items:
+                                # Trích xuất tên tác giả
+                                author_el = item.find(class_='cmt-top-name')
+                                author_name = author_el.text.strip() if author_el else "Khách hàng ẩn danh"
+                                
+                                # Đánh giá sao (rating)
+                                star_container = item.find(class_='cmt-top-star')
+                                filled_stars = 5
+                                if star_container:
+                                    filled_stars = len(star_container.find_all(class_='iconcmt-starbuy'))
+                                    if filled_stars == 0:
+                                        filled_stars = len(star_container.find_all(class_='iconcom-txtstar'))
+                                    if filled_stars == 0:
+                                        stars = star_container.find_all('i')
+                                        filled_stars = sum(1 for s in stars if any('star' in c and 'unstar' not in c for c in s.get('class', [])))
+                                        
+                                # Nội dung đánh giá
+                                text_el = item.find(class_='cmt-txt')
+                                review_text = text_el.text.strip() if text_el else "Khách hàng không để lại ý kiến."
+                                
+                                # Tạo user_id và review_id duy nhất
+                                user_id = f"u_{hashlib.md5(author_name.encode('utf-8')).hexdigest()[:8]}"
+                                
+                                raw_id = item.get('id', '').replace('r-', '')
+                                if raw_id:
+                                    review_id = f"r_{product_id}_{raw_id}"
+                                else:
+                                    content_hash = hashlib.md5(f"{author_name}_{review_text}".encode('utf-8')).hexdigest()[:8]
+                                    review_id = f"r_{product_id}_{content_hash}"
+                                    
+                                # Định dạng ngày tháng
+                                date_str = ""
+                                date_el = item.find(class_='cmtd')
+                                date_text = date_el.text.strip() if date_el else ""
+                                
+                                date_matches = re.findall(r'(\d{2}/\d{2}/\d{4})', review_text + " " + date_text)
+                                support_el = item.find(class_='support')
+                                if support_el:
+                                    date_matches.extend(re.findall(r'(\d{2}/\d{2}/\d{4})', support_el.text))
+                                    
+                                if date_matches:
+                                    date_str = date_matches[0]
+                                else:
+                                    # Phân tích ngày tương đối hoặc dùng ngày hôm nay
+                                    from datetime import datetime, timedelta
+                                    today = datetime.now()
+                                    if "ngày" in date_text:
+                                        m_day = re.search(r'(\d+)\s+ngày', date_text)
+                                        if m_day:
+                                            date_str = (today - timedelta(days=int(m_day.group(1)))).strftime('%m/%d/%Y %I:%M:%S %p')
+                                    elif "tháng" in date_text:
+                                        m_month = re.search(r'(\d+)\s+tháng', date_text)
+                                        if m_month:
+                                            date_str = (today - timedelta(days=int(m_month.group(1)) * 30)).strftime('%m/%d/%Y %I:%M:%S %p')
+                                    elif "năm" in date_text:
+                                        m_year = re.search(r'(\d+)\s+năm', date_text)
+                                        if m_year:
+                                            date_str = (today - timedelta(days=int(m_year.group(1)) * 365)).strftime('%m/%d/%Y %I:%M:%S %p')
+                                            
+                                    if not date_str:
+                                        date_str = today.strftime('%m/%d/%Y %I:%M:%S %p')
+                                        
+                                # Thêm vào danh sách reviews nếu chưa trùng review_id
+                                if not any(x['review_id'] == review_id for x in reviews):
+                                    reviews.append({
+                                        'review_id': review_id,
+                                        'user_id': user_id,
+                                        'product_id': product_id,
+                                        'rating': filled_stars,
+                                        'review_text': review_text,
+                                        'date': date_str
+                                    })
+                            
+                            if len(items) < 20:
+                                break
+                            
+                            self.sleep(0.5)
+                        else:
+                            break
+            except Exception as rev_err:
+                print(f"    [!] Lỗi khi cào thêm đánh giá từ API PagingAllRating: {rev_err}")
+                
+            # Loại bỏ các reviews trùng lặp nếu có
+            seen_ids = set()
+            unique_reviews = []
+            for r in reviews:
+                if r['review_id'] not in seen_ids:
+                    seen_ids.add(r['review_id'])
+                    unique_reviews.append(r)
+            reviews = unique_reviews
+            
             print(f"    [v] Thành công: Lấy được thông tin sản phẩm và {len(reviews)} đánh giá.")
             return product_info, reviews
             

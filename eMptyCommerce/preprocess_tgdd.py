@@ -67,6 +67,14 @@ def preprocess_reviews():
     # Loại bỏ đánh giá ảo từ FPT Shop (user u_01e8cc1e - Cao Thi My Duyen)
     df = df[df['user_id'] != 'u_01e8cc1e']
     
+    # TỐI ƯU HÓA: Phát hiện và loại bỏ các user ảo spamer có số lượng đánh giá bất thường (> 100 đánh giá)
+    # Do hành vi cào bị chặn/rate limit làm lặp lại bình luận mẫu trên mọi sản phẩm
+    user_counts = df['user_id'].value_counts()
+    spam_users = user_counts[user_counts > 100].index
+    if len(spam_users) > 0:
+        print(f"⚠️ Phát hiện và loại bỏ {len(spam_users)} tài khoản ảo có hành vi spam (>100 reviews).")
+        df = df[~df['user_id'].isin(spam_users)]
+    
     # 2. Ép kiểu rating về số
     df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
     df = df.dropna(subset=['rating'])

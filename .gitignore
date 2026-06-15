@@ -24,3 +24,5 @@ ENV/
 eMptyCommerce/__pycache__/
 .streamlit/secrets.toml
 eMptyCommerce/.streamlit/secrets.toml
+*.pkl
+eMptyCommerce/scratch/

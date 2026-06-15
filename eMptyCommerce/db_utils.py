@@ -6,6 +6,10 @@ Bảng chính:
 - Carts: Quản lý giỏ hàng (với customer_id hoặc session_id)
 - Cart_Items: Chi tiết sản phẩm trong giỏ hàng
 
+Dữ liệu sản phẩm lấy từ:
+- data/products.csv: Thông tin sản phẩm điện tử (product_id, name, category, price, image, brand, ...)
+- data/reviews.csv: Đánh giá sản phẩm (review_id, user_id, product_id, rating, review_text, date)
+
 Tính năng:
 - Tạo/lấy giỏ hàng theo customer_id hoặc session_id
 - Thêm/xóa sản phẩm vào giỏ
@@ -27,7 +31,49 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(APP_DIR, DB_FILENAME)
 
 
+# ==================== CACHE DỮ LIỆU SẢN PHẨM ====================
+_products_df_cache = None
+
+def get_products_df():
+    """
+    Tải dữ liệu sản phẩm từ products.csv và lưu trữ vào RAM (cache) để tăng tốc độ truy vấn.
+    """
+    global _products_df_cache
+    if _products_df_cache is None:
+        products_path = os.path.join(APP_DIR, 'data', 'products.csv')
+        if os.path.exists(products_path):
+            try:
+                print("🚀 [Database Cache] Đang nạp dữ liệu sản phẩm từ products.csv vào RAM...")
+                df = pd.read_csv(products_path)
+                df = df.drop_duplicates(subset=['product_id'], keep='first')
+                
+                # Hàm chuẩn hóa ID
+                def normalize_id(pid):
+                    pid_str = str(pid).strip()
+                    if pid_str.isdigit():
+                        return str(int(pid_str))
+                    return pid_str
+
+                df['product_id'] = df['product_id'].apply(normalize_id)
+                _products_df_cache = df
+                print(f"✓ [Database Cache] Đã nạp thành công {len(_products_df_cache)} sản phẩm.")
+            except Exception as e:
+                print(f"❌ [Database Cache] Lỗi nạp products.csv: {e}")
+                _products_df_cache = pd.DataFrame(columns=['product_id'])
+        else:
+            print(f"⚠️ [Database Cache] Không tìm thấy file products.csv tại {products_path}!")
+            _products_df_cache = pd.DataFrame(columns=['product_id'])
+    return _products_df_cache
+
+
+def clear_products_cache():
+    """Xóa bộ nhớ đệm dữ liệu sản phẩm."""
+    global _products_df_cache
+    _products_df_cache = None
+
+
 # ==================== HÀM TIỆN ÍCH ====================
+
 @contextmanager
 def get_db_connection():
     """
@@ -323,16 +369,17 @@ def get_cart_items(cart_id: int) -> pd.DataFrame:
     """
     Truy xuất danh sách sản phẩm trong giỏ hàng.
     
-    Kết nối với dữ liệu sách từ CSV (sử dụng book_data.csv) để lấy tên, giá (current_price), và ảnh bìa.
+    Kết nối với dữ liệu sản phẩm từ CSV (data/products.csv) để lấy tên, giá, và ảnh.
     
     Returns:
         DataFrame với các cột:
         - cart_item_id: ID mục trong giỏ
         - product_id: ID sản phẩm
-        - title: Tên sách
-        - category: Thể loại
-        - cover_link: Link ảnh bìa
-        - current_price: Giá tiền (số nguyên)
+        - name: Tên sản phẩm
+        - category: Danh mục sản phẩm
+        - image: Link ảnh sản phẩm
+        - price: Giá tiền (số nguyên)
+        - brand: Thương hiệu
         - quantity: Số lượng
         - added_at: Thời gian thêm vào
         - updated_at: Thời gian cập nhật
@@ -353,7 +400,7 @@ def get_cart_items(cart_id: int) -> pd.DataFrame:
             if not items:
                 return pd.DataFrame()
             
-            # Function to normalize product_id: string format, stripped, and remove leading zeros for numeric IDs
+            # Chuẩn hóa product_id: dạng chuỗi, bỏ khoảng trắng, loại bỏ số 0 đầu cho ID số
             def normalize_id(pid):
                 pid_str = str(pid).strip()
                 if pid_str.isdigit():
@@ -364,46 +411,69 @@ def get_cart_items(cart_id: int) -> pd.DataFrame:
             df = pd.DataFrame([dict(item) for item in items])
             df['product_id'] = df['product_id'].apply(normalize_id)
             
-            # Load dữ liệu sách từ CSV (sử dụng book_data.csv để lấy giá current_price)
-            book_data_path = os.path.join(APP_DIR, 'data', 'book_data.csv')
-            if os.path.exists(book_data_path):
-                book_data = pd.read_csv(book_data_path)
-                book_data = book_data.drop_duplicates(subset=['product_id'], keep='first')
-                book_data['product_id'] = book_data['product_id'].apply(normalize_id)
-                # Chuyển đổi current_price thành kiểu số nguyên nếu cần (mặc định 50000 nếu NaN)
-                book_data['current_price'] = book_data['current_price'].fillna(50000).astype(int)
-                # Join với dữ liệu sách để lấy title, category, cover_link, current_price
+            # Load dữ liệu sản phẩm từ bộ nhớ đệm
+            product_data = get_products_df()
+            
+            if not product_data.empty:
+                # Join để lấy thông tin sản phẩm (hỗ trợ cả schema book/crawler và schema sản phẩm cũ)
+                merge_cols = ['product_id']
+                cols_to_check = ['name', 'title', 'category', 'image', 'image_url', 'cover_link', 'price', 'current_price', 'brand']
+                for col in cols_to_check:
+                    if col in product_data.columns:
+                        merge_cols.append(col)
+                        
+                # Loại bỏ trùng lặp trong danh sách cột cần merge
+                merge_cols = list(set(merge_cols))
+                
                 df = df.merge(
-                    book_data[['product_id', 'title', 'category', 'cover_link', 'current_price']],
+                    product_data[merge_cols],
                     on='product_id',
                     how='left'
                 )
-            else:
-                # Nếu không có book_data.csv, thử lấy clean_book_data.csv và gán giá mặc định
-                clean_path = os.path.join(APP_DIR, 'data', 'clean_book_data.csv')
-                if os.path.exists(clean_path):
-                    book_data = pd.read_csv(clean_path)
-                    book_data = book_data.drop_duplicates(subset=['product_id'], keep='first')
-                    book_data['product_id'] = book_data['product_id'].apply(normalize_id)
-                    book_data['current_price'] = 50000
-                    df = df.merge(
-                        book_data[['product_id', 'title', 'category', 'cover_link', 'current_price']],
-                        on='product_id',
-                        how='left'
-                    )
 
-            # Đảm bảo các cột không có giá trị NaN sau khi merge (chống lỗi float NaN trong UI)
+            # Đảm bảo các cột không có giá trị NaN sau khi merge (chống lỗi trong UI)
             if not df.empty:
-                for col in ['title', 'category', 'cover_link']:
-                    if col in df.columns:
-                        df[col] = df[col].fillna("Sản phẩm không tên" if col == 'title' else ("Chưa phân loại" if col == 'category' else ""))
-                    else:
-                        df[col] = "Sản phẩm không tên" if col == 'title' else ("Chưa phân loại" if col == 'category' else "")
-                
-                if 'current_price' in df.columns:
-                    df['current_price'] = df['current_price'].fillna(50000).astype(int)
+                # 1. Đồng bộ hóa Tên sản phẩm (name / title)
+                if 'title' in df.columns:
+                    df['title'] = df['title'].fillna(df['product_id'].apply(lambda x: f"Sản phẩm #{x}"))
+                    df['name'] = df['title']
+                elif 'name' in df.columns:
+                    df['name'] = df['name'].fillna(df['product_id'].apply(lambda x: f"Sản phẩm #{x}"))
+                    df['title'] = df['name']
                 else:
-                    df['current_price'] = 50000
+                    df['name'] = df['product_id'].apply(lambda x: f"Sản phẩm #{x}")
+                    df['title'] = df['name']
+                
+                # 2. Đồng bộ hóa Thể loại
+                df['category'] = df['category'].fillna("Chưa phân loại") if 'category' in df.columns else "Chưa phân loại"
+                
+                # 3. Đồng bộ hóa Ảnh sản phẩm (image / image_url / cover_link)
+                if 'cover_link' in df.columns:
+                    df['cover_link'] = df['cover_link'].fillna("")
+                    df['image'] = df['cover_link']
+                elif 'image_url' in df.columns:
+                    df['cover_link'] = df['image_url'].fillna("")
+                    df['image'] = df['cover_link']
+                elif 'image' in df.columns:
+                    df['image'] = df['image'].fillna("")
+                    df['cover_link'] = df['image']
+                else:
+                    df['image'] = ""
+                    df['cover_link'] = ""
+                    
+                # 4. Thương hiệu
+                df['brand'] = df['brand'].fillna("Khác") if 'brand' in df.columns else "Khác"
+                
+                # 5. Giá sản phẩm (price / current_price)
+                if 'current_price' in df.columns:
+                    df['current_price'] = pd.to_numeric(df['current_price'], errors='coerce').fillna(0).astype(int)
+                    df['price'] = df['current_price']
+                elif 'price' in df.columns:
+                    df['price'] = pd.to_numeric(df['price'], errors='coerce').fillna(0).astype(int)
+                    df['current_price'] = df['price']
+                else:
+                    df['price'] = 0
+                    df['current_price'] = 0
             
             return df
             
@@ -888,17 +958,8 @@ def get_customer_orders(customer_id: Optional[int] = None, session_id: Optional[
             
             result = []
             
-            # Load book data to get title, category, cover_link
-            book_data_path = os.path.join(APP_DIR, 'data', 'book_data.csv')
-            book_df = pd.DataFrame()
-            if os.path.exists(book_data_path):
-                book_df = pd.read_csv(book_data_path)
-                book_df = book_df.drop_duplicates(subset=['product_id'], keep='first')
-            else:
-                clean_path = os.path.join(APP_DIR, 'data', 'clean_book_data.csv')
-                if os.path.exists(clean_path):
-                    book_df = pd.read_csv(clean_path)
-                    book_df = book_df.drop_duplicates(subset=['product_id'], keep='first')
+            # Load dữ liệu sản phẩm từ cache
+            product_df = get_products_df()
             
             for order in orders:
                 order_dict = dict(order)
@@ -915,18 +976,37 @@ def get_customer_orders(customer_id: Optional[int] = None, session_id: Optional[
                 
                 for item in items:
                     item_dict = dict(item)
-                    # Gán title, category mặc định
-                    item_dict['title'] = f"Sản phẩm #{item_dict['product_id']}"
+                    pid_str = str(item_dict['product_id']).strip()
+                    # Gán thông tin mặc định
+                    item_dict['name'] = f"Sản phẩm #{pid_str}"
+                    item_dict['title'] = item_dict['name']
                     item_dict['category'] = "Khác"
+                    item_dict['image'] = ""
                     item_dict['cover_link'] = ""
+                    item_dict['brand'] = "Khác"
                     
-                    if not book_df.empty:
-                        matched = book_df[book_df['product_id'].astype(str).str.strip() == str(item_dict['product_id']).strip()]
+                    # Đồng bộ hóa đơn giá
+                    raw_item_price = item_dict.get('price', 50000)
+                    item_dict['price'] = int(raw_item_price) if (raw_item_price is not None and pd.notna(raw_item_price)) else 50000
+                    item_dict['current_price'] = item_dict['price']
+                    
+                    if not product_df.empty:
+                        matched = product_df[product_df['product_id'] == pid_str]
                         if not matched.empty:
                             row = matched.iloc[0]
-                            item_dict['title'] = str(row.get('title', item_dict['title']))
+                            # Đồng bộ hóa Tên sản phẩm
+                            name_val = str(row.get('title', row.get('name', item_dict['name'])))
+                            item_dict['name'] = name_val
+                            item_dict['title'] = name_val
+                            
                             item_dict['category'] = str(row.get('category', item_dict['category']))
-                            item_dict['cover_link'] = str(row.get('cover_link', ''))
+                            
+                            # Đồng bộ hóa Ảnh sản phẩm
+                            img_val = str(row.get('image_url', row.get('cover_link', row.get('image', ''))))
+                            item_dict['image'] = img_val
+                            item_dict['cover_link'] = img_val
+                            
+                            item_dict['brand'] = str(row.get('brand', 'Khác'))
                             
                     items_list.append(item_dict)
                     
