@@ -254,10 +254,7 @@ def evaluate_svd_kfold(k=5):
             test_data[['customer_id', 'product_id', 'rating']], 
             reader
         )
-        testset = trainset.build_anti_testset()
-        # Tạo testset từ test_data
-        testset = [(int(row['customer_id']), int(row['product_id']), int(row['rating'])) 
-                   for _, row in test_data.iterrows()]
+        testset = test_dataset.build_full_trainset().build_testset()
         
         # Huấn luyện SVD
         svd = SVD(n_factors=50, n_epochs=40, lr_all=0.005, reg_all=0.02, random_state=42)

@@ -42,7 +42,7 @@ class HybridRecommender:
         Khởi tạo HybridRecommender.
         
         Các bước:
-        1. Đọc file data/clean_book_data.csv (thông tin sách)
+        1. Đọc file data/clean_book_data.csv (thông tin sản phẩm)
         2. Đọc file data/clean_reviews.csv (đánh giá của khách hàng)
         3. Khởi tạo các biến để lưu mô hình
         4. Tự động huấn luyện Content-Based và Collaborative mô hình
@@ -199,12 +199,12 @@ class HybridRecommender:
         Đọc dữ liệu từ các file CSV.
         
         Đọc:
-        - data/book_data.csv: Dữ liệu sách gốc chứa n_review và avg_rating
+        - data/book_data.csv: Dữ liệu sản phẩm gốc chứa n_review và avg_rating
         - data/clean_book_data.csv: Chứa product_id, title, category, cover_link, tokenized_desc
         - data/clean_reviews.csv: Chứa customer_id, product_id, rating
         """
         try:
-            # Đọc dữ liệu sách đầy đủ (chứa n_review, avg_rating) để cache
+            # Đọc dữ liệu sản phẩm đầy đủ (chứa n_review, avg_rating) để cache
             book_full_path = os.path.join(DATA_DIR, 'book_data.csv')
             if os.path.exists(book_full_path):
                 self.book_data_full = pd.read_csv(book_full_path)
@@ -213,7 +213,7 @@ class HybridRecommender:
                 self.book_data_full = None
                 print(f"     {book_full_path} không tìm thấy!")
 
-            # Đọc dữ liệu sách đã tiền xử lý
+            # Đọc dữ liệu sản phẩm đã tiền xử lý
             book_path = os.path.join(DATA_DIR, 'clean_book_data.csv')
             if os.path.exists(book_path):
                 df = pd.read_csv(book_path).reset_index(drop=True)
@@ -396,10 +396,10 @@ class HybridRecommender:
         Lấy danh sách sản phẩm tương tự dựa trên Content-Based Filtering.
         
         Các bước:
-        1. Tìm index (số thứ tự dòng) của product_id trong book_data DataFrame
+        1. Tìm index (số thứ tự dòng) của product_id trong product data DataFrame
         2. Tính độ tương đồng cosine tức thời (on-the-fly) của sản phẩm này với tất cả sản phẩm khác
         3. Sắp xếp theo độ tương đồng giảm dần
-        4. Lấy top_n sản phẩm giống nhất (bỏ qua cuốn đầu tiên vì nó chính là cuốn đang xem)
+        4. Lấy top_n sản phẩm giống nhất (bỏ qua sản phẩm đầu tiên vì nó chính là sản phẩm đang xem)
         5. Dùng .iloc để lấy data dựa trên số thứ tự dòng
         
         Args:
@@ -407,26 +407,26 @@ class HybridRecommender:
             top_n (int): Số lượng sản phẩm gợi ý (mặc định: 10)
         
         Returns:
-            DataFrame: Dataframe gồm sách tương tự + cột 'similarity_score'
+            DataFrame: Dataframe gồm sản phẩm tương tự + cột 'similarity_score'
         """
         try:
-            # Bước 1: Tìm index (số thứ tự dòng) của cuốn sách có product_id tương ứng
+            # Bước 1: Tìm index (số thứ tự dòng) của sản phẩm có product_id tương ứng
             idx = self.book_data[self.book_data['product_id'].astype(str).str.strip() == str(product_id).strip()].index[0]
         except IndexError:
-            # Nếu không tìm thấy sách -> trả về DataFrame rỗng
+            # Nếu không tìm thấy sản phẩm -> trả về DataFrame rỗng
             return pd.DataFrame()
         
-        # Bước 2: Tính độ tương đồng cosine tức thời (on-the-fly) của sách này với tất cả sách khác
+        # Bước 2: Tính độ tương đồng cosine tức thời (on-the-fly) của sản phẩm này với tất cả sản phẩm khác
         sim_scores_vector = cosine_similarity(self.tfidf_matrix[idx], self.tfidf_matrix)[0]
         sim_scores = list(enumerate(sim_scores_vector))
         
         # Bước 3: Sắp xếp theo điểm tương đồng giảm dần
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
         
-        # Bước 4: Lấy top_n cuốn sách giống nhất (bỏ qua cuốn đầu tiên vì nó chính là cuốn đang xem)
+        # Bước 4: Lấy top_n sản phẩm giống nhất (bỏ qua sản phẩm đầu tiên vì nó chính là sản phẩm đang xem)
         sim_scores = sim_scores[1:top_n+1]
         
-        # Bước 5: Lấy ra index của các cuốn sách đó
+        # Bước 5: Lấy ra index của các sản phẩm đó
         book_indices = [i[0] for i in sim_scores]
         scores = [i[1] for i in sim_scores]
         
@@ -926,9 +926,9 @@ class HybridRecommender:
                       Hoặc DataFrame rỗng nếu sản phẩm không có trong tập train
         
         Ví dụ:
-        - Nếu người dùng xem cuốn "Python Programming"
-        - Hàm sẽ trả về những cuốn sách khác mà những người 
-          mua "Python Programming" cũng thường mua
+        - Nếu người dùng xem sản phẩm "Tai nghe Bluetooth"
+        - Hàm sẽ trả về những sản phẩm khác mà những người 
+          mua "Tai nghe Bluetooth" cũng thường mua
         """
         try:
             # Bước 1: Chuyển đổi product_id thành inner_id (mã số nội bộ của Surprise)
@@ -942,17 +942,17 @@ class HybridRecommender:
                 self.knn_model.trainset.to_raw_iid(inner_id) for inner_id in neighbor_inner_ids
             ]
             
-            # Bước 4: Lấy thông tin chi tiết từ book_data
+            # Bước 4: Lấy thông tin chi tiết từ product data
             frequently_bought = self.book_data[
                 self.book_data['product_id'].isin(neighbor_product_ids)
             ].copy()
             
-            # Bước 5: Loại bỏ cuốn sách người dùng đang xem (tránh gợi ý lại sách đang xem)
+            # Bước 5: Loại bỏ sản phẩm người dùng đang xem (tránh gợi ý lại sản phẩm đang xem)
             frequently_bought = frequently_bought[
                 frequently_bought['product_id'] != product_id
             ].reset_index(drop=True)
             
-            # Bước 6: Loại bỏ các cuốn sách bị trùng tên (keep='first' để giữ bản ghi đầu tiên)
+            # Bước 6: Loại bỏ các sản phẩm bị trùng tên (keep='first' để giữ bản ghi đầu tiên)
             frequently_bought = frequently_bought.drop_duplicates(
                 subset=['title'], 
                 keep='first'
@@ -973,7 +973,7 @@ class HybridRecommender:
                 'knn_similarity_score', ascending=False
             ).reset_index(drop=True)
             
-            # Bước 9: Lấy đúng top_n cuốn sách sau khi đã lọc trùng
+            # Bước 9: Lấy đúng top_n sản phẩm sau khi đã lọc trùng
             frequently_bought = frequently_bought.head(top_n)
             
             return frequently_bought

@@ -46,10 +46,10 @@ def render_search_bar(session_state):
 def render_category_books_grid(books_df: pd.DataFrame, DATA_DIR: str, 
                                cols_per_row: int = 5):
     """
-    Render grid sách từ một danh mục
+    Render grid sản phẩm từ một danh mục
     
     Args:
-        books_df: DataFrame của sách từ danh mục
+        books_df: DataFrame sản phẩm từ danh mục
         DATA_DIR: Thư mục dữ liệu
         cols_per_row: Số cột một hàng
     """
@@ -146,7 +146,7 @@ def render_cosine_search_results_grid(similar_books_df: pd.DataFrame,
     Render grid kết quả tìm kiếm Cosine Similarity
     
     Args:
-        similar_books_df: DataFrame sách tương tự (có cột cosine_score)
+        similar_books_df: DataFrame sản phẩm tương tự (có cột cosine_score)
         cols_per_row: Số cột một hàng
     """
     from db_utils import add_to_cart
@@ -189,7 +189,7 @@ def render_customer_info_metrics(rated_books_count: int, avg_rating: float):
     Render thông tin khách hàng dạng metrics
     
     Args:
-        rated_books_count: Số sách đã đánh giá
+        rated_books_count: Số sản phẩm đã đánh giá
         avg_rating: Điểm đánh giá trung bình
     """
     col1, col2, col3 = st.columns(3)
@@ -211,12 +211,12 @@ def render_search_result_container(final_query: str, book_df: pd.DataFrame,
     
     Args:
         final_query: Từ khóa tìm kiếm
-        book_df: DataFrame sách đầy đủ
+        book_df: DataFrame sản phẩm đầy đủ
         tfidf_matrix: Ma trận TF-IDF
         vectorizer: Vectorizer TF-IDF
-        find_similar_books_func: Hàm tìm sách tương tự
+        find_similar_books_func: Hàm tìm sản phẩm tương tự
     """
-    with st.spinner(f"Đang tìm sách tương tự với '{final_query}'..."):
+    with st.spinner(f"Đang tìm sản phẩm tương tự với '{final_query}'..."):
         source_book, similar_books, error = find_similar_books_func(
             final_query, book_df, tfidf_matrix, top_n=5
         )
@@ -233,11 +233,11 @@ def render_search_result_container(final_query: str, book_df: pd.DataFrame,
 
 def show_book_reviews(book_id: int, reviews: list[dict]):
     """
-    Hiển thị đánh giá và bình luận của sách theo layout một trang duy nhất,
+    Hiển thị đánh giá và bình luận của sản phẩm theo layout một trang duy nhất,
     phân trang 5 bình luận/trang, hỗ trợ Light/Dark mode.
     
     Args:
-        book_id: ID của sách
+        book_id: ID của sản phẩm
         reviews: Danh sách các review, mỗi review là 1 dict chứa:
                  "ma_kh" (str), "so_sao" (int 1-5),
                  "tieu_de" (str | None), "noi_dung" (str | None), "ngay" (str | None)

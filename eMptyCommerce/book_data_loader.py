@@ -1,19 +1,19 @@
 """
-Module để load dữ liệu sách và lấy hình ảnh bìa
+Module để load dữ liệu sản phẩm và lấy hình ảnh bìa
 """
 
 import pandas as pd
 import os
 from functools import lru_cache
 
-# Đường dẫn đến dữ liệu sách
+# Đường dẫn đến dữ liệu sản phẩm
 BOOK_DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "clean_book_data.csv")
 
 
 @lru_cache(maxsize=1)
 def load_book_data():
     """
-    Load dữ liệu sách từ CSV.
+    Load dữ liệu sản phẩm từ CSV.
     Cache để tránh load lại nhiều lần.
     """
     try:
@@ -22,16 +22,16 @@ def load_book_data():
         df = df.drop_duplicates(subset=['title'])
         return df
     except Exception as e:
-        print(f"❌ Lỗi load dữ liệu sách: {e}")
+        print(f"❌ Lỗi load dữ liệu sản phẩm: {e}")
         return None
 
 
 def get_book_image(title):
     """
-    Lấy URL hình ảnh của cuốn sách theo tên.
+    Lấy URL hình ảnh của sản phẩm theo tên.
     
     Args:
-        title: Tên cuốn sách
+        title: Tên sản phẩm
         
     Returns:
         URL hình ảnh hoặc None nếu không tìm thấy
@@ -41,7 +41,7 @@ def get_book_image(title):
         if df is None:
             return None
         
-        # Tìm sách có tiêu đề giống nhất (case-insensitive)
+        # Tìm sản phẩm có tiêu đề giống nhất (case-insensitive)
         mask = df['title'].str.lower().str.contains(title.lower(), na=False)
         matches = df[mask]
         
@@ -53,20 +53,20 @@ def get_book_image(title):
         
         return None
     except Exception as e:
-        print(f"⚠️ Lỗi lấy ảnh sách '{title}': {e}")
+        print(f"⚠️ Lỗi lấy ảnh sản phẩm '{title}': {e}")
         return None
 
 
 def search_books_by_category(category, limit=5):
     """
-    Tìm kiếm sách theo thể loại.
+    Tìm kiếm sản phẩm theo thể loại.
     
     Args:
-        category: Thể loại sách
+        category: Thể loại sản phẩm
         limit: Số lượng kết quả tối đa
         
     Returns:
-        DataFrame với sách tìm được
+        DataFrame với sản phẩm tìm được
     """
     try:
         df = load_book_data()
@@ -82,22 +82,22 @@ def search_books_by_category(category, limit=5):
 
 def get_popular_books(limit=10):
     """
-    Lấy danh sách sách phổ biến (có cover_link).
+    Lấy danh sách sản phẩm phổ biến (có cover_link).
     
     Args:
         limit: Số lượng kết quả tối đa
         
     Returns:
-        DataFrame với sách có hình ảnh
+        DataFrame với sản phẩm có hình ảnh
     """
     try:
         df = load_book_data()
         if df is None:
             return None
         
-        # Lọc sách có cover_link
+        # Lọc sản phẩm có cover_link
         df_with_images = df[df['cover_link'].notna() & (df['cover_link'].str.len() > 0)]
         return df_with_images.head(limit)
     except Exception as e:
-        print(f"⚠️ Lỗi lấy sách phổ biến: {e}")
+        print(f"⚠️ Lỗi lấy sản phẩm phổ biến: {e}")
         return None

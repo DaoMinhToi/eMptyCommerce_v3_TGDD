@@ -1,5 +1,5 @@
 """
-Module Floating Chat Widget - Trợ lý AI Tư vấn Sách
+Module Floating Chat Widget - Trợ lý AI Tư vấn Sản phẩm
 Cung cấp giao diện chat nổi ở góc dưới phải màn hình
 """
 
@@ -267,7 +267,7 @@ def render_floating_chat_widget():
 
 def display_ai_message_with_images(ai_response):
     """
-    Hiển thị tin nhắn AI kèm hình ảnh sách được đề cập.
+    Hiển thị tin nhắn AI kèm hình ảnh sản phẩm được đề cập.
     
     Args:
         ai_response: Text phản hồi từ AI
@@ -275,28 +275,28 @@ def display_ai_message_with_images(ai_response):
     # Hiển thị text của AI (Hiển thị toàn bộ câu trả lời, không cắt ngắn)
     st.write(f"**eMpTy AI:** {ai_response}")
     
-    # Tìm các tiêu đề sách trong response (các text trong ngoặc kép)
-    # Pattern: "Tên Sách" hoặc Tên Sách (độ dài >= 2)
+    # Tìm các tên sản phẩm trong response (các text trong ngoặc kép)
+    # Pattern: "Tên Sản phẩm" hoặc Tên Sản phẩm (độ dài >= 2)
     pattern = r'"([^"]{2,})"'  # Tìm text trong ngoặc kép, dài từ 2 ký tự trở lên
     book_titles = re.findall(pattern, ai_response)
     
-    # Lấy hình ảnh cho mỗi sách
+    # Lấy hình ảnh cho mỗi sản phẩm
     if book_titles:
         st.markdown("#### 📱 Sản phẩm được đề cập:")
         
-        # Tạo grid hiển thị sách
+        # Tạo grid hiển thị sản phẩm
         cols = st.columns(2)
         book_count = 0
         
         # Các từ khóa thông dụng cần lọc bỏ nếu vô tình bị đặt trong ngoặc kép
         ignored_words = {
-            'của', 'tác giả', 'author', 'một cuốn', 'sách', 'tập', 'bạn', 'tôi', 'mình', 
-            'xin chào', 'hello', 'eMpty AI', 'tiểu thuyết', 'trinh thám', 'kinh tế'
+            'của', 'bản', 'loại', 'bạn', 'tôi', 'mình', 
+            'xin chào', 'hello', 'eMpty AI', 'điện thoại', 'laptop', 'tai nghe'
         }
         
-        for title in book_titles[:4]:  # Giới hạn 4 sách
+        for title in book_titles[:4]:  # Giới hạn 4 sản phẩm
             clean_title = title.strip()
-            # Lọc bỏ những title không phải tên sách
+            # Lọc bỏ title không phải tên sản phẩm
             if len(clean_title) >= 2 and clean_title.lower() not in ignored_words:
                 img_url = get_book_image(clean_title)
                 

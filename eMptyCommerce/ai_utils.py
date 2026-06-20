@@ -93,10 +93,10 @@ def get_available_model():
     return _AVAILABLE_MODEL
 
 
-# ==================== HÀM TÌM KIẾM NGỮ CẢNH SÁCH (RAG) ====================
+# ==================== HÀM TÌM KIẾM NGỮ CẢNH SẢN PHẨM (RAG) ====================
 def search_context_books(query_text, top_n=6):
     """
-    Tìm kiếm các sách liên quan nhất trong cơ sở dữ liệu dựa trên câu hỏi của người dùng.
+    Tìm kiếm các sản phẩm liên quan nhất trong cơ sở dữ liệu dựa trên câu hỏi của người dùng.
     
     Kết hợp:
     1. So khớp danh mục (Category)
@@ -138,7 +138,7 @@ def search_context_books(query_text, top_n=6):
 
     query_lower = query_text.lower().strip()
     
-    # Tính điểm khớp cho từng cuốn sách
+    # Tính điểm khớp cho từng sản phẩm
     scores = pd.Series(0.0, index=df.index)
     
     # 1. Tìm theo danh mục
@@ -199,7 +199,7 @@ def search_context_books(query_text, top_n=6):
         except Exception as e:
             print(f"⚠️ Lỗi tính cosine similarity trong search_context_books: {e}")
             
-    # Lọc sách có điểm khớp lớn hơn 0
+    # Lọc sản phẩm có điểm khớp lớn hơn 0
     matched_df = df[scores > 0].copy()
     matched_df['match_score'] = scores[scores > 0]
     
@@ -207,7 +207,7 @@ def search_context_books(query_text, top_n=6):
         matched_df = matched_df.sort_values(by='match_score', ascending=False)
         return matched_df.head(top_n).to_dict(orient='records')
         
-    # Fallback: Trả về sách phổ biến
+    # Fallback: Trả về sản phẩm phổ biến
     try:
         from book_data_loader import get_popular_books
         pop_books = get_popular_books(limit=top_n)
@@ -228,11 +228,11 @@ def search_context_books(query_text, top_n=6):
     return df.head(top_n).to_dict(orient='records')
 
 
-# ==================== HÀM TRỢ LỰC AI TƯ VẤN SÁCH ====================
+# ==================== HÀM TRỢ LỰC AI TƯ VẤN SẢN PHẨM ====================
 def get_ai_response(user_message, chat_history, gemini_available=True):
     """
-    Gửi tin nhắn tới Gemini API và nhận phản hồi từ AI Trợ lý tư vấn sách.
-    Tự động tìm kiếm sách liên quan trong hệ thống để làm ngữ cảnh.
+    Gửi tin nhắn tới Gemini API và nhận phản hồi từ AI Trợ lý tư vấn sản phẩm.
+    Tự động tìm kiếm sản phẩm liên quan trong hệ thống để làm ngữ cảnh.
     """
     if not gemini_available:
         return "❌ Chức năng AI không khả dụng. Vui lòng kiểm tra cấu hình API Key."

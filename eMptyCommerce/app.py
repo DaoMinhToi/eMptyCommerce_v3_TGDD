@@ -86,7 +86,7 @@ if 'customer_type' not in st.session_state:
         st.session_state.customer_type = "🆕 Khách hàng mới (Cold-Start)"
 
 # ==================== KHỞI TẠO SESSION STATE CHO CHAT AI ====================
-# Lịch sử cuộc trò chuyện với AI Trợ lý tư vấn sách
+# Lịch sử cuộc trò chuyện với AI Trợ lý tư vấn sản phẩm
 if 'messages' not in st.session_state:
     import json
     chat_history_param = st.query_params.get("chat_history")
@@ -197,7 +197,7 @@ def load_recommender_model():
 @st.cache_resource
 def load_book_data():
     """
-    Load dữ liệu sách từ clean_book_data.csv.
+    Load dữ liệu sản phẩm từ clean_book_data.csv.
     Cache để tránh đọc file liên tục.
     """
     try:
@@ -247,7 +247,7 @@ def load_raw_reviews_df():
 @st.cache_data
 def get_book_reviews_data(book_id) -> list[dict]:
     """
-    Đọc dữ liệu comments từ reviews.csv hoặc comments.csv và lọc theo product_id (book_id).
+    Đọc dữ liệu bình luận từ reviews.csv và lọc theo product_id.
     """
     try:
         # Ưu tiên đọc reviews.csv của TGDD trước (đã được cache trong bộ nhớ RAM)
@@ -295,7 +295,7 @@ def get_book_reviews_data(book_id) -> list[dict]:
 def get_bestseller(top_n=10):
     """
     Load từ book_data.csv (có đủ n_review, avg_rating)
-    Tính sách bán chạy nhất dựa trên Bayesian Average.
+    Tính sản phẩm bán chạy nhất dựa trên Bayesian Average.
     
     Công thức:
     Score = (n_review / (n_review + m)) * avg_rating + (m / (n_review + m)) * C
@@ -304,9 +304,9 @@ def get_bestseller(top_n=10):
     - n_review: Số lượt đánh giá
     - avg_rating: Điểm đánh giá trung bình
     - m: Số đánh giá tối thiểu (quantile 60%) để được xét
-    - C: Điểm trung bình của tất cả sách
+    - C: Điểm trung bình của tất cả sản phẩm
     
-    Lợi ích: Tránh bias cho sách ít review nhưng toàn 5 sao
+    Lợi ích: Tránh bias cho sản phẩm ít review nhưng toàn 5 sao
     """
     try:
         # Load từ book_data.csv (có cột n_review, avg_rating)
@@ -316,7 +316,7 @@ def get_bestseller(top_n=10):
         if df is not None and not df.empty:
             df = df[df['title'].notna() & (df['title'].astype(str).str.strip() != '') & (df['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
         
-        # Xóa duplicate product_id, giữ lại 1 dòng mỗi sách
+        # Xóa duplicate product_id, giữ lại 1 dòng mỗi sản phẩm
         df = df.drop_duplicates(subset='product_id')
         
         # Xóa dòng thiếu dữ liệu quan trọng
@@ -325,7 +325,7 @@ def get_bestseller(top_n=10):
         # Xác định số lượt đánh giá tối thiểu (quantile 60%)
         m = df['n_review'].quantile(0.6)
         
-        # Điểm trung bình của toàn bộ sách
+        # Điểm trung bình của toàn bộ sản phẩm
         C = df['avg_rating'].mean()
         
         # Tính Bayesian Average Score
@@ -334,14 +334,14 @@ def get_bestseller(top_n=10):
             (m / (df['n_review'] + m)) * C
         )
         
-        # Lọc sách có đủ lượt đánh giá
+        # Lọc sản phẩm có đủ lượt đánh giá
         popular = df[df['n_review'] >= m]
         
-        # Lấy top N sách có score cao nhất
+        # Lấy top N sản phẩm có score cao nhất
         return popular.nlargest(top_n, 'bestseller_score')
     
     except Exception as e:
-        print(f"⚠️ Không thể tải danh sách sách bán chạy: {e}")
+        print(f"⚠️ Không thể tải danh sách sản phẩm bán chạy: {e}")
         return pd.DataFrame()
 
 
@@ -464,7 +464,7 @@ customer_dict = {cid: f"Customer {cid} ({total_counts.get(cid, 0)} đánh giá)"
 
 
 
-# Danh sách sách với product_id (chuẩn hóa key dạng string)
+# Danh mục sản phẩm với product_id (chuẩn hóa key dạng string)
 book_dict = dict(zip(book_data['product_id'].astype(str).str.strip(), book_data['title']))
 
 
@@ -693,7 +693,7 @@ with st.sidebar:
 """, unsafe_allow_html=True)
         
         st.caption(
-            "Dữ liệu thực tế từ Tiki thường thiếu rating rõ ràng. Hệ thống quy đổi "
+            "Dữ liệu thực tế từ TMĐT thường thiếu rating rõ ràng. Hệ thống quy đổi "
             "hành vi ẩn thành điểm số để SVD có thể học được mô hình khuyến nghị."
         )
 
@@ -746,7 +746,7 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
     
     def find_similar_books(query_title, top_n=5):
         """
-        Tìm sách tương tự dựa trên TF-IDF từ recommender module.
+        Tìm sản phẩm tương tự dựa trên TF-IDF từ recommender module.
         Đảm bảo kết quả consistent với Content-Based model.
         """
         import unicodedata
@@ -789,7 +789,7 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
                 matches = book_df[mask_no_accent]
         
         if matches.empty:
-            return None, None, "Không tìm thấy sách có tên phù hợp. Thử nhập tên khác!"
+            return None, None, "Không tìm thấy sản phẩm có tên phù hợp. Thử nhập tên khác!"
         
         source_book = matches.iloc[0]
         source_idx = matches.index[0]
@@ -801,7 +801,7 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
         results['cosine_score'] = cos_scores[similar_indices]
         return source_book, results, None
     
-    with st.spinner(f"Đang tìm sách tương tự với '{final_query}'..."):
+    with st.spinner(f"Đang tìm sản phẩm tương tự với '{final_query}'..."):
         source_book, similar_books, error = find_similar_books(final_query, top_n=5)
         st.session_state.search_source_book = source_book
         st.session_state.search_similar_books = similar_books
@@ -914,8 +914,8 @@ if st.session_state.get("show_comparison", False):
                     text=[
                         "N/A",
                         f"{rmse_knn:.4f}",
-                        f"🏆 {rmse_cf:.4f}",
-                        f"✓ {rmse_hybrid:.4f}"
+                        f"{rmse_cf:.4f}",
+                        f"🏆 {rmse_hybrid:.4f}"
                     ],
                     textposition="outside",
                     hovertemplate="<b>%{x}</b><br>RMSE: %{y:.4f}<extra></extra>"
@@ -995,7 +995,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
         "→ Gợi ý dựa trên **sản phẩm bạn đang quan tâm**"
     )
     
-    # Chọn sách tham chiếu
+    # Chọn sản phẩm tham chiếu
     st.subheader("📱 Bước 1: Chọn sản phẩm bạn đang quan tâm")
     selected_book_id = st.selectbox(
         "Chọn sản phẩm:",
@@ -1004,19 +1004,19 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
         key="cold_start_book"
     )
     
-    # Tự động reset nếu người dùng đổi sách tham chiếu ở Bước 1
+    # Tự động reset nếu người dùng đổi sản phẩm tham chiếu ở Bước 1
     if st.session_state.get('cold_reference_id') is not None and st.session_state.cold_reference_id != selected_book_id:
         st.session_state.cold_recommendations = None
         st.session_state.cold_reference_id = None
     
-    # Lấy thông tin sách được chọn
+    # Lấy thông tin sản phẩm được chọn
     selected_book = book_data[book_data['product_id'] == selected_book_id].iloc[0]
     
     st.subheader("📱 Sản phẩm bạn đang xem:")
     col1, col2, col3 = st.columns([2, 3, 5])
     
     with col1:
-        # Hiển thị hình ảnh bìa sách
+        # Hiển thị hình ảnh bìa sản phẩm
         if pd.notna(selected_book['cover_link']) and selected_book['cover_link'] != '':
             st.image(selected_book['cover_link'], use_container_width=True)
         else:
@@ -1068,7 +1068,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
         else:
             st.success(f"✅ Tìm thấy {len(recommendations)} sản phẩm tương tự!")
             
-            # CSS custom cho card sách
+            # CSS custom cho card sản phẩm
             st.markdown("""
             <style>
             .book-card {
@@ -1209,7 +1209,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
     st.caption("Gợi ý dành cho bạn dựa trên lượt đánh giá cao nhất từ cộng đồng")
     
     try:
-        # Lấy top 10 sách bán chạy nhất (dùng Bayesian Average)
+        # Lấy top 10 sản phẩm bán chạy nhất (dùng Bayesian Average)
         bestsellers = get_bestseller(top_n=10)
         
         if bestsellers.empty:
@@ -1217,7 +1217,7 @@ if customer_type == "🆕 Khách hàng mới (Cold-Start)":
         else:
             st.success(f"✅ Tìm thấy {len(bestsellers)} sản phẩm bán chạy nhất!")
             
-            # CSS custom cho card sách (nếu chưa được thêm)
+            # CSS custom cho card sản phẩm (nếu chưa được thêm)
             st.markdown("""
             <style>
             .book-card {
@@ -1349,7 +1349,7 @@ else:
                 SELECT product_id FROM User_Interactions 
                 WHERE customer_id = ? AND interaction_type = 'PURCHASE'
             """, (selected_customer, selected_customer))
-            exclude_pids = {int(row['product_id']) for row in cursor.fetchall()}
+            exclude_pids = {str(row['product_id']).strip() for row in cursor.fetchall()}
     except Exception as e:
         print("Lỗi khi lấy danh sách loại trừ hiển thị:", e)
 
@@ -1367,7 +1367,7 @@ else:
             if book_df_full is not None and not book_df_full.empty:
                 book_df_full = book_df_full[book_df_full['title'].notna() & (book_df_full['title'].astype(str).str.strip() != '') & (book_df_full['title'].astype(str).str.strip() != 'Sản phẩm không tên')]
             
-            # Chỉ giữ category xuất hiện >= 5 lần (loại bỏ tên sách bị nhầm thành category)
+            # Chỉ giữ category xuất hiện >= 5 lần (loại bỏ tên sản phẩm bị nhầm thành category)
             cat_counts = book_df_full['category'].value_counts()
             valid_categories = cat_counts[cat_counts >= 5].index.tolist()
             all_categories = ['Tất cả'] + sorted(valid_categories)
@@ -1506,7 +1506,7 @@ else:
 
 
 
-# ==================== FLOATING CHAT WIDGET - TRỢ LỰC AI TƯ VẤN SÁCH ====================
+# ==================== FLOATING CHAT WIDGET - TRỢ LỰC AI TƯ VẤN SẢN PHẨM ====================
 # Chỉ hiển thị khi Gemini API sẵn có
 if GEMINI_AVAILABLE:
     render_simple_floating_button()
@@ -1524,7 +1524,7 @@ if st.session_state.get("selected_book_for_reviews") is not None:
             recommender_instance.update_and_retrain()
             st.session_state.last_recorded_view_book_id = view_book_id
             
-    # Lấy thông tin sách
+    # Lấy thông tin sản phẩm
     matching_books = book_data[book_data['product_id'] == view_book_id]
     if not matching_books.empty:
         sel_book = matching_books.iloc[0]

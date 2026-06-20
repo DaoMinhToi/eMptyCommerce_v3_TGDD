@@ -63,12 +63,12 @@ Chứa **5 hàm chính:**
 
 #### 4. `render_book_card()`
 
-- Card sách với giá & rating
+- Card sản phẩm với giá & rating
 - Dùng cho danh mục & bestseller
 
 #### 5. `render_book_card_hybrid()`
 
-- Card sách cho gợi ý Hybrid/Cosine
+- Card sản phẩm cho gợi ý Hybrid/Cosine
 - Hiển thị score thay vì giá
 
 #### 6. `render_footer()`
@@ -88,7 +88,7 @@ Chứa **6 hàm render:**
 
 #### 2. `render_category_books_grid(books_df, DATA_DIR, cols_per_row=5)`
 
-- Hiển thị grid sách từ danh mục
+- Hiển thị grid sản phẩm từ danh mục
 - Gọi `render_book_card()` từ styles
 
 #### 3. `render_hybrid_recommendations_grid(recommendations_df, cols_per_row=5)`

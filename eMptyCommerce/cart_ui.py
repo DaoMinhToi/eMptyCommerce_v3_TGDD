@@ -240,7 +240,7 @@ def render_shopping_cart_page(cart_id: int, book_data: pd.DataFrame):
     
     Args:
         cart_id: ID của giỏ hàng
-        book_data: DataFrame chứa dữ liệu tất cả sách
+        book_data: DataFrame chứa dữ liệu tất cả sản phẩm
     """
     st.title("🛒 Giỏ hàng")
     
@@ -316,7 +316,7 @@ def render_cart_sidebar(cart_id: int):
 
 def record_purchase_and_retrain(customer_id: Optional[int], items_df: pd.DataFrame):
     """
-    Ghi nhận tương tác PURCHASE (5.0 sao) cho các sách đã thanh toán và retrain mô hình.
+    Ghi nhận tương tác PURCHASE (5.0 sao) cho các sản phẩm đã thanh toán và retrain mô hình.
     """
     if customer_id is None or items_df.empty:
         return

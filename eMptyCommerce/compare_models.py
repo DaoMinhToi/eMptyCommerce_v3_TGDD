@@ -215,5 +215,5 @@ if __name__ == "__main__":
     print(f"   Công thức Hybrid: Score_Hybrid = 0.4 × Score_CB + 0.6 × Score_CF")
     print(f"   Hybrid giải quyết Cold-Start mà CF không làm được")
     print(f"   KNN phù hợp cho recommendation dựa trên sản phẩm tương tự")
-    print(f"   Phù hợp đặc thù Tiki: ma trận thưa, nhiều user mới")
+    print(f"   Phù hợp đặc thù TMĐT: ma trận thưa, nhiều user mới")
     print("="*80)
