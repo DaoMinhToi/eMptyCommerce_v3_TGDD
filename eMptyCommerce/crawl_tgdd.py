@@ -433,7 +433,7 @@ class TGDDScraper:
                     # Quét tối đa 2 trang đánh giá (40 đánh giá)
                     for r_page in [1, 2]:
                         payload = {
-                            'ctid': num_pid,
+                            'productId': num_pid,
                             'page': r_page,
                             'score': 0,
                             'order': 0,

@@ -258,8 +258,8 @@ class HybridRecommender:
         try:
             # Bước 1: Fit TF-IDF Vectorizer
             self.tfidf_vectorizer = TfidfVectorizer(
-                max_features=3000,  # Giới hạn 3000 từ quan trọng nhất (cân bằng tốc độ và độ chính xác)
-                ngram_range=(1, 2),  # Sử dụng unigram và bigram
+                max_features=3000,  # Giới hạn học 3000 từ quan trọng nhất trong toàn bộ kho dữ liệu của các sản phẩm  (cân bằng tốc độ và độ chính xác)
+                ngram_range=(1, 2),  #Cho phép AI học cả từ đơn (1 chữ) và từ ghép (2 chữ đi liền nhau) - Sử dụng unigram và bigram
                 min_df=2,  # Từ phải xuất hiện ít nhất 2 lần
                 max_df=0.8,  # Từ không xuất hiện quá 80% document
                 stop_words=None  # Không bỏ stopwords (vì text đã được xử lý)
@@ -312,7 +312,7 @@ class HybridRecommender:
             return
         
         try:
-            # Bước 1: Định nghĩa Rating Scale
+            # Bước 1: Định nghĩa Thang điểm đánh giá
             rating_min = self.reviews_data['rating'].min()
             rating_max = self.reviews_data['rating'].max()
             
@@ -341,7 +341,7 @@ class HybridRecommender:
                 n_factors=50,  # Số latent factors tìm ra 50 đặc trưng ẩn để mô tả sở thích của người dùng và thuộc tính của sản phẩm.
                 n_epochs=40,  # Số lần lặp huấn luyện
                 lr_all=0.005,  # Tốc độ học (Optimization step size). Điều chỉnh mức độ thay đổi mô hình qua mỗi lần lặp. 
-                reg_all=0.02,  # Regularization parameter
+                reg_all=0.02,  # Điều chuẩn chống học vẹt
                 random_state=42
             )
             new_svd_model.fit(self.trainset)
@@ -526,8 +526,10 @@ class HybridRecommender:
                     book_data_full = book_data_full.dropna(subset=['n_review', 'avg_rating'])
                     
                     # Tính Bayesian Average Score
-                    m = book_data_full['n_review'].quantile(0.6)
-                    C = book_data_full['avg_rating'].mean()
+                    df_with_reviews = book_data_full[book_data_full['n_review'] > 0]
+                    m = max(df_with_reviews['n_review'].quantile(0.6), 3)  # Tối thiểu m=3
+                    C = df_with_reviews['avg_rating'].mean()
+                    
                     book_data_full['popularity_score'] = (
                         (book_data_full['n_review'] / (book_data_full['n_review'] + m)) * 
                         book_data_full['avg_rating'] + 
@@ -537,10 +539,10 @@ class HybridRecommender:
                     # Lọc: chỉ giữ sản phẩm có n_review >= m
                     book_data_full = book_data_full[book_data_full['n_review'] >= m]
                     
-                    # Deduplicate self.book_data before merge (local copy, not modifying self)
+                    # Xóa trùng lặp self.book_data trước khi hợp nhất (bản sao cục bộ, không sửa đổi self)
                     clean_book_data = self.book_data.drop_duplicates(subset='product_id', keep='first')
                     
-                    # Merge với self.book_data để lấy cover_link từ clean_book_data
+                    # hợp nhất với self.book_data để lấy cover_link từ clean_book_data
                     merged = book_data_full.merge(
                         clean_book_data[['product_id', 'cover_link']], 
                         on='product_id', 
@@ -554,10 +556,23 @@ class HybridRecommender:
                     # Final safety dedup after merge to prevent any remaining duplicates
                     merged = merged.drop_duplicates(subset='product_id', keep='first')
                     
-                    # Sắp xếp theo popularity_score giảm dần, lấy top_n
-                    popular_products = merged.nlargest(top_n, 'popularity_score')[
-                        ['product_id', 'title', 'category', 'cover_link', 'popularity_score']
-                    ].copy()
+                    # ĐA DẠNG HÓA DANH MỤC: Lấy top 2 sản phẩm tốt nhất từ mỗi danh mục
+                    diverse_popular = []
+                    categories = merged['category'].dropna().unique()
+                    for cat in categories:
+                        cat_df = merged[merged['category'] == cat]
+                        top_cat = cat_df.nlargest(2, 'popularity_score')
+                        diverse_popular.append(top_cat)
+                        
+                    if diverse_popular:
+                        merged_diverse = pd.concat(diverse_popular, ignore_index=True)
+                        popular_products = merged_diverse.sort_values(by='popularity_score', ascending=False).head(top_n)[
+                            ['product_id', 'title', 'category', 'cover_link', 'popularity_score']
+                        ].copy()
+                    else:
+                        popular_products = merged.nlargest(top_n, 'popularity_score')[
+                            ['product_id', 'title', 'category', 'cover_link', 'popularity_score']
+                        ].copy()
                     
                     return popular_products
                 
@@ -671,7 +686,7 @@ class HybridRecommender:
                 if product_id in self.svd_known_products:
                     try:
                         pred = self.svd_model.predict(customer_id, product_id)
-                        svd_scores[product_id] = pred.est  # estimated rating
+                        svd_scores[product_id] = pred.est  
                     except:
                         svd_scores[product_id] = default_svd_est
                 else:
@@ -709,7 +724,7 @@ class HybridRecommender:
                         else:                      # PURCHASE (5.0) hoặc REVIEW mới
                             ref_rating = 4.5
                     
-                    # Phân cấp bội số trọng số theo thứ tự thời gian gần nhất (SQLite) và giỏ hàng hoạt động
+                    # Phân cấp trọng số tương tác theo thứ tự thời gian gần nhất (SQLite) 
                     multiplier = 1.0
                     if ref_pid in latest_unique_pids:
                         idx = latest_unique_pids.index(ref_pid)
@@ -719,6 +734,7 @@ class HybridRecommender:
                             multiplier = 1.03
                         else:
                             multiplier = 1.01
+                    #nếu sản phẩm được click nằm trong giỏ hàng thì hệ số luôn được nhân cho 1.03
                     elif ref_pid in session_context_pids:
                         multiplier = 1.03
                     
@@ -730,7 +746,7 @@ class HybridRecommender:
                     else:
                         history_params.append((ref_idx, scaled_weight, ref_pid))
 
-            # Tính max sims cho session có Row-wise Normalization & Anchor Tracking
+            # Tính max sims cho session có Row-wise Normalization & Anchor Tracking - Content-based
             session_anchors = {}
             max_sims_session = np.zeros(len(self.book_data))
             if session_params:
@@ -738,7 +754,7 @@ class HybridRecommender:
                 weights = np.array([param[1] for param in session_params]).reshape(-1, 1)
                 sub_matrix = cosine_similarity(self.tfidf_matrix[ref_indices], self.tfidf_matrix)
                 
-                # Row-wise Normalization: đưa độ tương đồng tốt nhất của từng dòng về 1.0 (trừ chính nó)
+                # chuẩn hóa dữ liệu: đưa độ tương đồng tốt nhất của từng dòng về 1.0 (trừ chính nó)
                 for i in range(len(ref_indices)):
                     ref_idx = ref_indices[i]
                     row = sub_matrix[i]
@@ -750,15 +766,16 @@ class HybridRecommender:
                         sub_matrix[i] = np.minimum(1.0, row / row_max)
                         
                 scaled_sims = sub_matrix * weights
+                #chốt sản phẩm có trọng số cao nhất loại bỏ các sản phẩm không liên quan
                 max_sims_session = np.max(scaled_sims, axis=0)
                 
-                # Xác định Anchor cho từng sản phẩm ứng viên
+                # Xác định trọng điểm cho từng sản phẩm ứng viên
                 for pid in unrated_products:
                     if pid in self.product_id_to_idx:
                         prod_idx = self.product_id_to_idx[pid]
                         sim_values = sub_matrix[:, prod_idx]
                         best_i = np.argmax(sim_values)
-                        if sim_values[best_i] > 0.25:  # Ngưỡng liên kết Anchor
+                        if sim_values[best_i] > 0.25:  # Ngưỡng liên kết trọng điểm
                             session_anchors[pid] = session_params[best_i][2]
 
             # Tính max sims cho history với Row-wise Normalization
@@ -833,7 +850,7 @@ class HybridRecommender:
             # Sắp xếp và lấy top N có đa dạng hóa danh mục & Anchor trong phiên
             sorted_products = sorted(hybrid_scores.items(), key=lambda x: x[1], reverse=True)
             
-            # Tính số lượng sản phẩm của từng danh mục có trong phiên
+            #Đếm xem khách hàng đang click vào danh mục nào nhiều nhất ngay lúc này
             session_cat_counts = {}
             for ref_pid in (session_context_pids | set(latest_unique_pids)):
                 cat = self.pid_to_category.get(ref_pid, "")
@@ -866,7 +883,7 @@ class HybridRecommender:
                     if session_item_counts.get(anchor, 0) >= max_per_session_item:
                         continue
                         
-                # Khống chế hạn mức danh mục gốc
+                # nới lỏng Khống chế hạn mức danh mục gốc
                 dynamic_limit = max_per_category
                 if cat in session_cat_counts:
                     dynamic_limit += 2 * (session_cat_counts[cat] - 1)
@@ -1013,7 +1030,12 @@ class HybridRecommender:
                     'VIEW': 1
                 }
                 new_interactions['priority'] = new_interactions['interaction_type'].map(priority_map).fillna(0)
-                new_interactions['is_recent'] = 1
+                
+                # Chỉ lấy 5 tương tác mới nhất của mỗi khách hàng làm "recent"
+                # Tránh việc tích lũy tương tác cũ từ nhiều ngày trước khiến gợi ý bị loãng/nhiễu
+                new_interactions = new_interactions.sort_values(by='interaction_id', ascending=False)
+                new_interactions['is_recent'] = (new_interactions.groupby('customer_id').cumcount() < 5).astype(int)
+                
                 new_interactions['is_implicit'] = new_interactions['interaction_type'].isin(['VIEW', 'ADD_TO_CART']).astype(int)
                 
                 base_reviews_copy = base_reviews.copy()
@@ -1033,7 +1055,7 @@ class HybridRecommender:
                 
                 # TỐI ƯU HÓA: Vector hóa việc thiết lập cờ is_recent và is_implicit thay vì gọi .apply(axis=1) chậm chạp
                 combined_keys = combined['customer_id'].astype(str) + "_" + combined['product_id'].astype(str)
-                recent_keys = set(new_interactions['customer_id'].astype(str) + "_" + new_interactions['product_id'].astype(str))
+                recent_keys = set(new_interactions[new_interactions['is_recent'] == 1]['customer_id'].astype(str) + "_" + new_interactions[new_interactions['is_recent'] == 1]['product_id'].astype(str))
                 implicit_keys = set(new_interactions[new_interactions['is_implicit'] == 1]['customer_id'].astype(str) + "_" + new_interactions[new_interactions['is_implicit'] == 1]['product_id'].astype(str))
                 
                 combined['is_recent'] = (combined_keys.isin(recent_keys) | (combined['is_recent'] == 1)).astype(int)

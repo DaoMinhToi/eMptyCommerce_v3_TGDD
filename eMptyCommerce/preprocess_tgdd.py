@@ -125,7 +125,7 @@ def preprocess_products(products_in_reviews, df_reviews_raw):
         avg_rating=('rating', 'mean')
     ).reset_index()
     
-    # Merge thông số review vào sản phẩm
+    # Lắp ghép dữ liệu thông số review vào sản phẩm
     df = df.merge(reviews_grouped, on='product_id', how='left')
     df['n_review'] = df['n_review'].fillna(0).astype(int)
     df['avg_rating'] = df['avg_rating'].fillna(0.0).round(2)

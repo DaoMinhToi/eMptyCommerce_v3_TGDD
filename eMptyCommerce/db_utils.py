@@ -1048,12 +1048,12 @@ def get_all_user_interactions() -> pd.DataFrame:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT customer_id, product_id, rating, interaction_type
+                SELECT interaction_id, customer_id, product_id, rating, interaction_type, timestamp
                 FROM User_Interactions
             ''')
             rows = cursor.fetchall()
             if not rows:
-                return pd.DataFrame(columns=['customer_id', 'product_id', 'rating', 'interaction_type'])
+                return pd.DataFrame(columns=['interaction_id', 'customer_id', 'product_id', 'rating', 'interaction_type', 'timestamp'])
             
             df = pd.DataFrame([dict(row) for row in rows])
             # Ép kiểu dữ liệu an toàn: chuyển chuỗi số thành int, giữ nguyên nếu có chữ cái (u_xxxx)
@@ -1063,6 +1063,6 @@ def get_all_user_interactions() -> pd.DataFrame:
             return df
     except Exception as e:
         print(f"❌ Lỗi lấy danh sách tương tác người dùng: {e}")
-        return pd.DataFrame(columns=['customer_id', 'product_id', 'rating', 'interaction_type'])
+        return pd.DataFrame(columns=['interaction_id', 'customer_id', 'product_id', 'rating', 'interaction_type', 'timestamp'])
 
 

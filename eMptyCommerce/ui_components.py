@@ -333,25 +333,22 @@ def show_book_reviews(book_id: int, reviews: list[dict]):
         st.info("📱 Sản phẩm này chưa có bình luận nào từ khách hàng.")
         return
 
-    # Khởi tạo st.session_state cho phân trang bình luận
-    # Reset trang nếu đổi book_id
-    if "review_book_id" not in st.session_state or st.session_state["review_book_id"] != book_id:
-        st.session_state["review_book_id"] = book_id
-        st.session_state["review_page"] = 1
+    # Sử dụng key duy nhất cho từng sản phẩm để tránh xung đột session state giữa nhiều bộ hiển thị review
+    page_key = f"review_page_{book_id}"
     
-    if "review_page" not in st.session_state:
-        st.session_state["review_page"] = 1
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
 
     limit = 5
     max_pages = max(1, (total + limit - 1) // limit)
     
     # Clip trang hiện tại trong khoảng hợp lệ
-    if st.session_state["review_page"] > max_pages:
-        st.session_state["review_page"] = max_pages
-    if st.session_state["review_page"] < 1:
-        st.session_state["review_page"] = 1
+    if st.session_state[page_key] > max_pages:
+        st.session_state[page_key] = max_pages
+    if st.session_state[page_key] < 1:
+        st.session_state[page_key] = 1
 
-    start_idx = (st.session_state["review_page"] - 1) * limit
+    start_idx = (st.session_state[page_key] - 1) * limit
     end_idx = start_idx + limit
     page_reviews = reviews[start_idx:end_idx]
 
@@ -398,13 +395,13 @@ def show_book_reviews(book_id: int, reviews: list[dict]):
         st.write("") # Spacer
         col_prev, col_info, col_next = st.columns([1, 2, 1])
         with col_prev:
-            if st.button("← Trước", key=f"prev_rev_{book_id}", disabled=(st.session_state["review_page"] <= 1), use_container_width=True):
-                st.session_state["review_page"] -= 1
+            if st.button("← Trước", key=f"prev_rev_{book_id}", disabled=(st.session_state[page_key] <= 1), use_container_width=True):
+                st.session_state[page_key] -= 1
                 st.rerun()
         with col_info:
-            st.markdown(f"<div style='text-align: center; line-height: 2.2; font-size: 14px; color: var(--review-card-color, #333);'>Trang {st.session_state['review_page']} / {max_pages}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center; line-height: 2.2; font-size: 14px; color: var(--review-card-color, #333);'>Trang {st.session_state[page_key]} / {max_pages}</div>", unsafe_allow_html=True)
         with col_next:
-            if st.button("Tiếp →", key=f"next_rev_{book_id}", disabled=(st.session_state["review_page"] >= max_pages), use_container_width=True):
-                st.session_state["review_page"] += 1
+            if st.button("Tiếp →", key=f"next_rev_{book_id}", disabled=(st.session_state[page_key] >= max_pages), use_container_width=True):
+                st.session_state[page_key] += 1
                 st.rerun()
 

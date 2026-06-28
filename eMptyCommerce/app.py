@@ -265,25 +265,7 @@ def get_book_reviews_data(book_id) -> list[dict]:
                     "ngay": row.get("date") if pd.notna(row.get("date")) else None
                 })
             return reviews_list
-            
-        # Fallback về comments.csv cũ nếu không có reviews.csv
-        comments_path = os.path.join(DATA_DIR, 'comments.csv')
-        if not os.path.exists(comments_path):
-            return []
-        df_comments = pd.read_csv(comments_path)
-        df_comments['product_id'] = df_comments['product_id'].astype(str).str.strip()
-        df_book = df_comments[df_comments['product_id'] == str(book_id).strip()]
-        
-        reviews_list = []
-        for _, row in df_book.iterrows():
-            reviews_list.append({
-                "ma_kh": str(row.get("customer_id", "Ẩn danh")),
-                "so_sao": int(row.get("rating", 5)),
-                "tieu_de": row.get("title") if pd.notna(row.get("title")) else None,
-                "noi_dung": row.get("content") if pd.notna(row.get("content")) else None,
-                "ngay": None  # File CSV comments không có cột ngày
-            })
-        return reviews_list
+        return []
     except Exception as e:
         print(f"Lỗi khi đọc bình luận: {e}")
         return []
@@ -322,11 +304,13 @@ def get_bestseller(top_n=10):
         # Xóa dòng thiếu dữ liệu quan trọng
         df = df.dropna(subset=['n_review', 'avg_rating', 'title'])
         
-        # Xác định số lượt đánh giá tối thiểu (quantile 60%)
-        m = df['n_review'].quantile(0.6)
+        # CHỈ tính quantile trên các SP thực sự CÓ đánh giá (n_review > 0)
+        # Tránh bị bias bởi ~60% SP có n_review=0 khiến m=0 (Bayesian mất tác dụng)
+        df_with_reviews = df[df['n_review'] > 0]
+        m = max(df_with_reviews['n_review'].quantile(0.6), 3)  # Tối thiểu m=3
         
-        # Điểm trung bình của toàn bộ sản phẩm
-        C = df['avg_rating'].mean()
+        # Điểm trung bình chỉ tính trên SP có đánh giá (tránh kéo C xuống do SP 0 sao)
+        C = df_with_reviews['avg_rating'].mean()
         
         # Tính Bayesian Average Score
         df['bestseller_score'] = (
@@ -337,7 +321,21 @@ def get_bestseller(top_n=10):
         # Lọc sản phẩm có đủ lượt đánh giá
         popular = df[df['n_review'] >= m]
         
-        # Lấy top N sản phẩm có score cao nhất
+        # ĐA DẠNG HÓA DANH MỤC: Lấy top 2 sản phẩm tốt nhất từ mỗi danh mục
+        diverse_popular = []
+        categories = popular['category'].dropna().unique()
+        for cat in categories:
+            cat_df = popular[popular['category'] == cat]
+            # Lấy tối đa 2 sản phẩm tốt nhất của danh mục này
+            top_cat = cat_df.nlargest(2, 'bestseller_score')
+            diverse_popular.append(top_cat)
+            
+        if diverse_popular:
+            result_df = pd.concat(diverse_popular, ignore_index=True)
+            # Sắp xếp lại toàn bộ theo score
+            result_df = result_df.sort_values(by='bestseller_score', ascending=False)
+            return result_df.head(top_n)
+        
         return popular.nlargest(top_n, 'bestseller_score')
     
     except Exception as e:
@@ -486,7 +484,7 @@ with st.sidebar:
         st.caption("**Mô hình:** TF-IDF + SVD")
         st.divider()
         st.caption("**Sinh viên:** Đào Minh Tới")
-        st.caption("**Giáo viên hướng dẫn:** ThS. Bùi Thị Diễm Trinh")
+        st.caption("**Giáo viên hướng dẫn:**  Bùi Thị Diễm Trinh")
     
     st.markdown("---")
     
@@ -752,12 +750,12 @@ if st.session_state.get('do_search') and st.session_state.get('search_query'):
         import unicodedata
         book_df = recommender.book_data
         tfidf_matrix = recommender.tfidf_matrix
-        
+        #Chuẩn hóa có dấu, ép chuỗi văn bản về chữ thường và loại bỏ khoảng cách thừa
         def normalize_nfc(s):
             if not isinstance(s, str):
                 return ""
             return unicodedata.normalize('NFC', s.lower().strip())
-            
+        #Chuẩn hóa không dấu, Nó ép chữ về chuẩn NFD (tách rời chữ cái và dấu) và bỏ toàn bộ dấu
         def remove_accents(s):
             if not isinstance(s, str):
                 return ""
@@ -971,9 +969,9 @@ if st.session_state.get("show_comparison", False):
             
             st.plotly_chart(fig_mae, use_container_width=True)
         
-        # Explanation about Hybrid trade-off
+        # Explanation about Hybrid solving Cold-Start
         st.info(
-            "💡 **Hybrid có RMSE cao hơn SVD nhưng là mô hình duy nhất giải quyết được Cold-Start Problem** — "
+            "💡 **Mô hình Hybrid là giải pháp hiệu quả giúp giải quyết Cold-Start Problem** — "
             "gợi ý cho người dùng mới chưa có lịch sử đánh giá. Đây là ưu tiên hàng đầu trong "
             "thực tế TMĐT Việt Nam với tỷ lệ người dùng mới cao."
         )
