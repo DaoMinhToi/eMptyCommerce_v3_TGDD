@@ -904,17 +904,21 @@ if st.session_state.get("show_comparison", False):
             rmse_values = [0, rmse_knn, rmse_cf, rmse_hybrid]
             rmse_colors = ["#95a5a6", "#3498db", "#2ecc71", "#e67e22"]
             
+            valid_rmse = [v for v in rmse_values if v > 0]
+            min_rmse = min(valid_rmse) if valid_rmse else -1
+            text_rmse = ["N/A"]
+            for v in rmse_values[1:]:
+                if v == min_rmse:
+                    text_rmse.append(f"🏆 {v:.4f}")
+                else:
+                    text_rmse.append(f"{v:.4f}")
+            
             fig_rmse = go.Figure(data=[
                 go.Bar(
                     x=models,
                     y=rmse_values,
                     marker_color=rmse_colors,
-                    text=[
-                        "N/A",
-                        f"{rmse_knn:.4f}",
-                        f"{rmse_cf:.4f}",
-                        f"🏆 {rmse_hybrid:.4f}"
-                    ],
+                    text=text_rmse,
                     textposition="outside",
                     hovertemplate="<b>%{x}</b><br>RMSE: %{y:.4f}<extra></extra>"
                 )
@@ -939,17 +943,21 @@ if st.session_state.get("show_comparison", False):
             mae_values = [0, mae_knn, mae_cf, mae_hybrid]
             mae_colors = ["#95a5a6", "#3498db", "#2ecc71", "#e67e22"]
             
+            valid_mae = [v for v in mae_values if v > 0]
+            min_mae = min(valid_mae) if valid_mae else -1
+            text_mae = ["N/A"]
+            for v in mae_values[1:]:
+                if v == min_mae:
+                    text_mae.append(f"🏆 {v:.4f}")
+                else:
+                    text_mae.append(f"{v:.4f}")
+            
             fig_mae = go.Figure(data=[
                 go.Bar(
                     x=models,
                     y=mae_values,
                     marker_color=mae_colors,
-                    text=[
-                        "N/A",
-                        f"🏆 {mae_knn:.4f}",
-                        f"{mae_cf:.4f}",
-                        f"{mae_hybrid:.4f}"
-                    ],
+                    text=text_mae,
                     textposition="outside",
                     hovertemplate="<b>%{x}</b><br>MAE: %{y:.4f}<extra></extra>"
                 )
@@ -1494,7 +1502,8 @@ else:
         else:
             customer_reviews_display['display_time'] = []
             
-        customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating', 'display_time']]
+        customer_reviews_display = customer_reviews_display[['product_id', 'product_title', 'rating', 'display_time']].copy()
+        customer_reviews_display['product_id'] = customer_reviews_display['product_id'].astype(str)
         customer_reviews_display.columns = ['ID Sản phẩm', 'Tên Sản phẩm', 'Đánh giá', 'Thời gian']
         
         st.caption(f"📊 Tổng cộng: {len(customer_reviews_display)} sản phẩm đã đánh giá")

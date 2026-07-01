@@ -260,7 +260,7 @@ class HybridRecommender:
             self.tfidf_vectorizer = TfidfVectorizer(
                 max_features=3000,  # Giới hạn học 3000 từ quan trọng nhất trong toàn bộ kho dữ liệu của các sản phẩm  (cân bằng tốc độ và độ chính xác)
                 ngram_range=(1, 2),  #Cho phép AI học cả từ đơn (1 chữ) và từ ghép (2 chữ đi liền nhau) - Sử dụng unigram và bigram
-                min_df=2,  # Từ phải xuất hiện ít nhất 2 lần
+                min_df=2,  #1 Từ phải xuất hiện ít nhất 2 lần
                 max_df=0.8,  # Từ không xuất hiện quá 80% document
                 stop_words=None  # Không bỏ stopwords (vì text đã được xử lý)
             )
@@ -552,8 +552,6 @@ class HybridRecommender:
                     
                     # Sử dụng cover_link từ clean_book_data nếu có, nếu không thì dùng từ book_data
                     merged['cover_link'] = merged['cover_link_clean'].fillna(merged['cover_link'])
-                    
-                    # Final safety dedup after merge to prevent any remaining duplicates
                     merged = merged.drop_duplicates(subset='product_id', keep='first')
                     
                     # ĐA DẠNG HÓA DANH MỤC: Lấy top 2 sản phẩm tốt nhất từ mỗi danh mục
@@ -746,7 +744,7 @@ class HybridRecommender:
                     else:
                         history_params.append((ref_idx, scaled_weight, ref_pid))
 
-            # Tính max sims cho session có Row-wise Normalization & Anchor Tracking - Content-based
+            # Tính max sims cho session các tương tác mới như là purchase hoặc view - Content-based
             session_anchors = {}
             max_sims_session = np.zeros(len(self.book_data))
             if session_params:
@@ -838,8 +836,8 @@ class HybridRecommender:
                     normalized_svd = (svd_scores[product_id] - min_svd) / svd_range
                 else:
                     normalized_svd = 0.5
-                normalized_svd = max(0.0, min(1.0, normalized_svd))  # Clip to [0, 1]
-                normalized_content = max(0.0, min(1.0, content_scores[product_id]))  # Clip content similarity to [0, 1]
+                normalized_svd = max(0.0, min(1.0, normalized_svd)) 
+                normalized_content = max(0.0, min(1.0, content_scores[product_id]))
                 
                 # Tính hybrid score
                 hybrid_scores[product_id] = (
